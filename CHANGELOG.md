@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Added Unity Editor progress UI with `EditorUtility.DisplayCancelableProgressBar`.
+- Added import cancellation support for Figma requests, sprite downloads, and hierarchy generation.
+- Disabled importer controls while an import is running.
+
 ## 0.2.1
 
 - Reduced Figma image export batch size.

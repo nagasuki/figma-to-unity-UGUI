@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using UnityEditor;
@@ -33,6 +34,7 @@ namespace FigmaToUGUI.Editor
         private bool replaceExistingImport = true;
         private bool addImportMetadata = true;
         private bool isImporting;
+        private CancellationTokenSource cancellationTokenSource;
         private string status;
         private Vector2 scroll;
 
@@ -61,53 +63,66 @@ namespace FigmaToUGUI.Editor
             }
         }
 
+        private void OnDisable()
+        {
+            CancelImport();
+            EditorUtility.ClearProgressBar();
+        }
+
         private void OnGUI()
         {
             scroll = EditorGUILayout.BeginScrollView(scroll);
 
-            EditorGUILayout.LabelField("Figma Source", EditorStyles.boldLabel);
-            accessToken = EditorGUILayout.PasswordField("Access Token", accessToken);
-            fileInput = EditorGUILayout.TextField("File URL or Key", fileInput);
-            nodeId = EditorGUILayout.TextField("Node ID (optional)", nodeId);
-
-            EditorGUILayout.Space(8f);
-            EditorGUILayout.LabelField("Unity Output", EditorStyles.boldLabel);
-            using (new EditorGUILayout.HorizontalScope())
+            using (new EditorGUI.DisabledScope(isImporting))
             {
-                outputFolder = EditorGUILayout.TextField("Output Folder", outputFolder);
-                if (GUILayout.Button("Pick", GUILayout.Width(64f)))
+                EditorGUILayout.LabelField("Figma Source", EditorStyles.boldLabel);
+                accessToken = EditorGUILayout.PasswordField("Access Token", accessToken);
+                fileInput = EditorGUILayout.TextField("File URL or Key", fileInput);
+                nodeId = EditorGUILayout.TextField("Node ID (optional)", nodeId);
+
+                EditorGUILayout.Space(8f);
+                EditorGUILayout.LabelField("Unity Output", EditorStyles.boldLabel);
+                using (new EditorGUILayout.HorizontalScope())
                 {
-                    PickOutputFolder();
+                    outputFolder = EditorGUILayout.TextField("Output Folder", outputFolder);
+                    if (GUILayout.Button("Pick", GUILayout.Width(64f)))
+                    {
+                        PickOutputFolder();
+                    }
                 }
-            }
 
-            imageScale = EditorGUILayout.Slider("Rendered Image Scale", imageScale, 0.25f, 4f);
-            renderUnsupportedNodesAsImages = EditorGUILayout.ToggleLeft("Render images, vectors, and complex shapes as sprites", renderUnsupportedNodesAsImages);
-            addCanvasIfNeeded = EditorGUILayout.ToggleLeft("Create or use a Canvas when no parent is selected", addCanvasIfNeeded);
-            replaceExistingImport = EditorGUILayout.ToggleLeft("Replace previous import from the same Figma node", replaceExistingImport);
-            addImportMetadata = EditorGUILayout.ToggleLeft("Add Figma import metadata to generated objects", addImportMetadata);
+                imageScale = EditorGUILayout.Slider("Rendered Image Scale", imageScale, 0.25f, 4f);
+                renderUnsupportedNodesAsImages = EditorGUILayout.ToggleLeft("Render images, vectors, and complex shapes as sprites", renderUnsupportedNodesAsImages);
+                addCanvasIfNeeded = EditorGUILayout.ToggleLeft("Create or use a Canvas when no parent is selected", addCanvasIfNeeded);
+                replaceExistingImport = EditorGUILayout.ToggleLeft("Replace previous import from the same Figma node", replaceExistingImport);
+                addImportMetadata = EditorGUILayout.ToggleLeft("Add Figma import metadata to generated objects", addImportMetadata);
 
-            EditorGUILayout.Space(8f);
-            EditorGUILayout.LabelField("Mapping Profile", EditorStyles.boldLabel);
-            profile = (FigmaToUGUIProfile)EditorGUILayout.ObjectField("Profile", profile, typeof(FigmaToUGUIProfile), false);
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                useTextMeshPro = EditorGUILayout.ToggleLeft("Use TextMeshPro when available", useTextMeshPro);
-                if (GUILayout.Button("Create Profile", GUILayout.Width(104f)))
+                EditorGUILayout.Space(8f);
+                EditorGUILayout.LabelField("Mapping Profile", EditorStyles.boldLabel);
+                profile = (FigmaToUGUIProfile)EditorGUILayout.ObjectField("Profile", profile, typeof(FigmaToUGUIProfile), false);
+                using (new EditorGUILayout.HorizontalScope())
                 {
-                    CreateProfileAsset();
+                    useTextMeshPro = EditorGUILayout.ToggleLeft("Use TextMeshPro when available", useTextMeshPro);
+                    if (GUILayout.Button("Create Profile", GUILayout.Width(104f)))
+                    {
+                        CreateProfileAsset();
+                    }
                 }
-            }
 
-            applyAutoLayout = EditorGUILayout.ToggleLeft("Convert Figma Auto Layout to Unity Layout Groups", applyAutoLayout);
-            applyConstraints = EditorGUILayout.ToggleLeft("Convert Figma Constraints to RectTransform anchors", applyConstraints);
+                applyAutoLayout = EditorGUILayout.ToggleLeft("Convert Figma Auto Layout to Unity Layout Groups", applyAutoLayout);
+                applyConstraints = EditorGUILayout.ToggleLeft("Convert Figma Constraints to RectTransform anchors", applyConstraints);
+            }
 
             EditorGUILayout.Space(8f);
             EditorGUILayout.HelpBox(
                 "Select an existing RectTransform before importing to place the Figma UI under it. A profile can map Figma font families, layer names to prefabs, and layer names to nine-slice sprite borders.",
                 MessageType.Info);
 
-            using (new EditorGUI.DisabledScope(isImporting))
+            if (isImporting)
+            {
+                EditorGUILayout.HelpBox("Import is running in Unity's progress window. Use that window's Cancel button to stop it.", MessageType.None);
+            }
+            else
             {
                 if (GUILayout.Button("Import Figma UI", GUILayout.Height(36f)))
                 {
@@ -115,11 +130,7 @@ namespace FigmaToUGUI.Editor
                 }
             }
 
-            if (!string.IsNullOrEmpty(status))
-            {
-                EditorGUILayout.Space(8f);
-                EditorGUILayout.HelpBox(status, isImporting ? MessageType.None : MessageType.Info);
-            }
+            DrawStatus();
 
             EditorGUILayout.EndScrollView();
         }
@@ -150,7 +161,9 @@ namespace FigmaToUGUI.Editor
             SavePrefs();
 
             isImporting = true;
-            status = "Downloading Figma file...";
+            cancellationTokenSource = new CancellationTokenSource();
+            status = "Starting import...";
+            SetProgress(new FigmaImportProgress("Starting import", "Preparing request...", 0f));
             Repaint();
 
             try
@@ -169,17 +182,21 @@ namespace FigmaToUGUI.Editor
                     replaceExistingImport = replaceExistingImport && (profile == null || profile.replaceExistingImport),
                     addImportMetadata = addImportMetadata && (profile == null || profile.addImportMetadata),
                     profile = profile,
-                    parent = Selection.activeTransform is RectTransform ? Selection.activeTransform : null
+                    parent = Selection.activeTransform is RectTransform ? Selection.activeTransform : null,
+                    cancellationToken = cancellationTokenSource.Token,
+                    progress = SetProgress
                 };
 
                 FigmaApiClient client = new FigmaApiClient(accessToken);
-                FigmaFile file = await client.GetFileAsync(fileKey, normalizedNodeId);
-                status = "Building Unity UI...";
-                Repaint();
+                FigmaFile file = await client.GetFileAsync(fileKey, normalizedNodeId, cancellationTokenSource.Token, SetProgress);
 
                 FigmaToUGUIImporter importer = new FigmaToUGUIImporter(client, settings);
                 GameObject imported = await importer.ImportAsync(file);
                 status = "Imported " + imported.name + ".";
+            }
+            catch (OperationCanceledException)
+            {
+                status = "Import cancelled.";
             }
             catch (Exception ex)
             {
@@ -189,7 +206,49 @@ namespace FigmaToUGUI.Editor
             finally
             {
                 isImporting = false;
+                if (cancellationTokenSource != null)
+                {
+                    cancellationTokenSource.Dispose();
+                    cancellationTokenSource = null;
+                }
+
+                EditorUtility.ClearProgressBar();
                 Repaint();
+            }
+        }
+
+        private void CancelImport()
+        {
+            if (cancellationTokenSource != null && !cancellationTokenSource.IsCancellationRequested)
+            {
+                status = "Cancelling import...";
+                cancellationTokenSource.Cancel();
+                Repaint();
+            }
+        }
+
+        private void SetProgress(FigmaImportProgress progress)
+        {
+            if (progress == null)
+            {
+                return;
+            }
+
+            status = progress.title + " - " + progress.detail;
+            if (EditorUtility.DisplayCancelableProgressBar(progress.title, progress.detail, Mathf.Clamp01(progress.value)))
+            {
+                CancelImport();
+            }
+
+            Repaint();
+        }
+
+        private void DrawStatus()
+        {
+            if (!string.IsNullOrEmpty(status))
+            {
+                EditorGUILayout.Space(8f);
+                EditorGUILayout.HelpBox(status, isImporting ? MessageType.None : MessageType.Info);
             }
         }
 

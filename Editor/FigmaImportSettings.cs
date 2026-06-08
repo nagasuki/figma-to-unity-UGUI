@@ -1,4 +1,6 @@
 using UnityEngine;
+using System;
+using System.Threading;
 
 namespace FigmaToUGUI.Editor
 {
@@ -17,5 +19,7 @@ namespace FigmaToUGUI.Editor
         public bool addImportMetadata = true;
         public FigmaToUGUIProfile profile;
         public Transform parent;
+        public CancellationToken cancellationToken;
+        public Action<FigmaImportProgress> progress;
     }
 }

@@ -23,6 +23,9 @@ namespace FigmaToUGUI.Editor
 
         public async Task<GameObject> ImportAsync(FigmaFile file)
         {
+            ThrowIfCancelled();
+            Report("Preparing import", "Resolving Figma root node...", 0.16f);
+
             if (file == null || file.document == null)
             {
                 throw new InvalidOperationException("No Figma document was returned.");
@@ -41,17 +44,23 @@ namespace FigmaToUGUI.Editor
                 await PrepareRenderedSpritesAsync(root);
             }
 
+            ThrowIfCancelled();
+            Report("Building hierarchy", "Creating Unity UI objects...", 0.75f);
+
             Transform parent = ResolveParent();
             if (settings.replaceExistingImport)
             {
                 parent = ReplaceExistingImport(parent, root);
             }
 
-            GameObject imported = CreateNode(root, parent, null);
+            int totalNodes = CountImportableNodes(root);
+            int createdNodes = 0;
+            GameObject imported = CreateNode(root, parent, null, totalNodes, ref createdNodes);
             imported.name = SafeName(root.name, "Figma Import");
 
             Selection.activeGameObject = imported;
             EditorGUIUtility.PingObject(imported);
+            Report("Import complete", "Imported " + createdNodes + " UI object(s).", 1f);
             return imported;
         }
 
@@ -87,6 +96,9 @@ namespace FigmaToUGUI.Editor
 
         private async Task PrepareRenderedSpritesAsync(FigmaNode root)
         {
+            ThrowIfCancelled();
+            Report("Preparing sprites", "Finding layers that need generated sprites...", 0.18f);
+
             List<FigmaNode> renderNodes = new List<FigmaNode>();
             CollectNodesForRendering(root, renderNodes);
 
@@ -96,10 +108,11 @@ namespace FigmaToUGUI.Editor
                 nodeIds.Add(renderNodes[i].id);
             }
 
-            Dictionary<string, string> urls = await client.GetNodeImageUrlsAsync(settings.fileKey, nodeIds, settings.imageScale);
+            Dictionary<string, string> urls = await client.GetNodeImageUrlsAsync(settings.fileKey, nodeIds, settings.imageScale, settings.cancellationToken, settings.progress);
             int skippedSprites = 0;
             for (int i = 0; i < renderNodes.Count; i++)
             {
+                ThrowIfCancelled();
                 FigmaNode node = renderNodes[i];
                 if (!urls.ContainsKey(node.id) || string.IsNullOrEmpty(urls[node.id]))
                 {
@@ -107,7 +120,9 @@ namespace FigmaToUGUI.Editor
                     continue;
                 }
 
-                byte[] bytes = await client.DownloadBytesAsync(urls[node.id]);
+                Report("Downloading sprites", "Downloading sprite " + (i + 1) + "/" + renderNodes.Count + "...", 0.45f + 0.25f * ((float)i / Mathf.Max(1, renderNodes.Count)));
+                byte[] bytes = await client.DownloadBytesAsync(urls[node.id], settings.cancellationToken);
+                ThrowIfCancelled();
                 spritesByNodeId[node.id] = SaveSprite(node, bytes);
             }
 
@@ -169,11 +184,18 @@ namespace FigmaToUGUI.Editor
             return false;
         }
 
-        private GameObject CreateNode(FigmaNode node, Transform parent, FigmaRectangle parentBounds)
+        private GameObject CreateNode(FigmaNode node, Transform parent, FigmaRectangle parentBounds, int totalNodes, ref int createdNodes)
         {
+            ThrowIfCancelled();
             if (node == null || !node.visible || !node.HasBounds)
             {
                 return null;
+            }
+
+            createdNodes++;
+            if (createdNodes == 1 || createdNodes % 10 == 0 || createdNodes == totalNodes)
+            {
+                Report("Building hierarchy", "Creating UI object " + createdNodes + "/" + Mathf.Max(1, totalNodes) + "...", 0.75f + 0.24f * ((float)createdNodes / Mathf.Max(1, totalNodes)));
             }
 
             bool importChildren;
@@ -205,13 +227,34 @@ namespace FigmaToUGUI.Editor
             {
                 for (int i = 0; i < node.children.Count; i++)
                 {
-                    CreateNode(node.children[i], rect, node.Bounds);
+                    CreateNode(node.children[i], rect, node.Bounds, totalNodes, ref createdNodes);
                 }
             }
 
             ApplyAutoLayout(go, node);
 
             return go;
+        }
+
+        private int CountImportableNodes(FigmaNode node)
+        {
+            if (node == null || !node.visible || !node.HasBounds)
+            {
+                return 0;
+            }
+
+            int count = 1;
+            if (node.children == null || spritesByNodeId.ContainsKey(node.id))
+            {
+                return count;
+            }
+
+            for (int i = 0; i < node.children.Count; i++)
+            {
+                count += CountImportableNodes(node.children[i]);
+            }
+
+            return count;
         }
 
         private GameObject CreateGameObjectForNode(FigmaNode node, out bool importChildren, out bool mappedPrefab)
@@ -808,6 +851,19 @@ namespace FigmaToUGUI.Editor
         private bool ShouldUseTextMeshPro()
         {
             return settings.useTextMeshPro || (settings.profile != null && settings.profile.useTextMeshPro);
+        }
+
+        private void ThrowIfCancelled()
+        {
+            settings.cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        private void Report(string title, string detail, float value)
+        {
+            if (settings.progress != null)
+            {
+                settings.progress(new FigmaImportProgress(title, detail, value));
+            }
         }
 
     }

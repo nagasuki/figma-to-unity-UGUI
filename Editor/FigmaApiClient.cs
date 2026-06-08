@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -19,8 +20,11 @@ namespace FigmaToUGUI.Editor
             this.accessToken = accessToken;
         }
 
-        public async Task<FigmaFile> GetFileAsync(string fileKey, string nodeId)
+        public async Task<FigmaFile> GetFileAsync(string fileKey, string nodeId, CancellationToken cancellationToken, Action<FigmaImportProgress> progress)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(progress, "Downloading Figma file", "Reading file data from Figma...", 0.05f);
+
             string url;
             if (string.IsNullOrEmpty(nodeId))
             {
@@ -32,11 +36,13 @@ namespace FigmaToUGUI.Editor
                       "/nodes?ids=" + UnityWebRequest.EscapeURL(nodeId);
             }
 
-            string json = await GetTextAsync(url);
+            string json = await GetTextAsync(url, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(progress, "Parsing Figma file", "Preparing imported layers...", 0.15f);
             return FigmaModelParser.ParseFile(json, nodeId);
         }
 
-        public async Task<Dictionary<string, string>> GetNodeImageUrlsAsync(string fileKey, IList<string> nodeIds, float scale)
+        public async Task<Dictionary<string, string>> GetNodeImageUrlsAsync(string fileKey, IList<string> nodeIds, float scale, CancellationToken cancellationToken, Action<FigmaImportProgress> progress)
         {
             Dictionary<string, string> results = new Dictionary<string, string>();
             if (nodeIds == null || nodeIds.Count == 0)
@@ -47,20 +53,24 @@ namespace FigmaToUGUI.Editor
             float clampedScale = Mathf.Clamp(scale, 0.01f, 4f);
             for (int start = 0; start < nodeIds.Count; start += ImageBatchSize)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 List<string> batch = new List<string>();
                 for (int i = start; i < Mathf.Min(start + ImageBatchSize, nodeIds.Count); i++)
                 {
                     batch.Add(nodeIds[i]);
                 }
 
-                await RequestNodeImageUrlsWithRetryAsync(fileKey, batch, clampedScale, results);
+                float progressValue = 0.2f + 0.2f * ((float)start / nodeIds.Count);
+                Report(progress, "Rendering Figma sprites", "Requesting sprite URLs " + Mathf.Min(start + ImageBatchSize, nodeIds.Count) + "/" + nodeIds.Count + "...", progressValue);
+                await RequestNodeImageUrlsWithRetryAsync(fileKey, batch, clampedScale, results, cancellationToken);
             }
 
             return results;
         }
 
-        private async Task RequestNodeImageUrlsWithRetryAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results)
+        private async Task RequestNodeImageUrlsWithRetryAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results, CancellationToken cancellationToken)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (nodeIds == null || nodeIds.Count == 0)
             {
                 return;
@@ -68,7 +78,7 @@ namespace FigmaToUGUI.Editor
 
             try
             {
-                await RequestNodeImageUrlsAsync(fileKey, nodeIds, scale, results);
+                await RequestNodeImageUrlsAsync(fileKey, nodeIds, scale, results, cancellationToken);
             }
             catch (InvalidOperationException ex)
             {
@@ -80,15 +90,15 @@ namespace FigmaToUGUI.Editor
                 if (nodeIds.Count > 1)
                 {
                     int midpoint = nodeIds.Count / 2;
-                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(0, midpoint), scale, results);
-                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(midpoint, nodeIds.Count - midpoint), scale, results);
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(0, midpoint), scale, results, cancellationToken);
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(midpoint, nodeIds.Count - midpoint), scale, results, cancellationToken);
                     return;
                 }
 
                 float nextScale = scale * 0.5f;
                 if (nextScale >= 0.25f)
                 {
-                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds, nextScale, results);
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds, nextScale, results, cancellationToken);
                     return;
                 }
 
@@ -96,14 +106,14 @@ namespace FigmaToUGUI.Editor
             }
         }
 
-        private async Task RequestNodeImageUrlsAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results)
+        private async Task RequestNodeImageUrlsAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results, CancellationToken cancellationToken)
         {
             string ids = string.Join(",", nodeIds.ToArray());
             string url = BaseUrl + "/images/" + UnityWebRequest.EscapeURL(fileKey) +
                          "?ids=" + UnityWebRequest.EscapeURL(ids) +
                          "&format=png&scale=" + scale.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
-            string json = await GetTextAsync(url);
+            string json = await GetTextAsync(url, cancellationToken);
             Dictionary<string, object> payload = MiniJson.Deserialize(json) as Dictionary<string, object>;
             Dictionary<string, object> images = payload != null && payload.ContainsKey("images")
                 ? payload["images"] as Dictionary<string, object>
@@ -123,30 +133,36 @@ namespace FigmaToUGUI.Editor
             }
         }
 
-        public async Task<byte[]> DownloadBytesAsync(string url)
+        public async Task<byte[]> DownloadBytesAsync(string url, CancellationToken cancellationToken)
         {
             using (UnityWebRequest request = UnityWebRequest.Get(url))
             {
-                await SendAsync(request);
+                await SendAsync(request, cancellationToken);
                 return request.downloadHandler.data;
             }
         }
 
-        private async Task<string> GetTextAsync(string url)
+        private async Task<string> GetTextAsync(string url, CancellationToken cancellationToken)
         {
             using (UnityWebRequest request = UnityWebRequest.Get(url))
             {
                 request.SetRequestHeader("X-Figma-Token", accessToken);
-                await SendAsync(request);
+                await SendAsync(request, cancellationToken);
                 return request.downloadHandler.text;
             }
         }
 
-        private static async Task SendAsync(UnityWebRequest request)
+        private static async Task SendAsync(UnityWebRequest request, CancellationToken cancellationToken)
         {
             UnityWebRequestAsyncOperation operation = request.SendWebRequest();
             while (!operation.isDone)
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    request.Abort();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
                 await Task.Yield();
             }
 
@@ -163,6 +179,14 @@ namespace FigmaToUGUI.Editor
         private static bool IsRenderTimeout(Exception ex)
         {
             return ex.Message.IndexOf("Render timeout", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static void Report(Action<FigmaImportProgress> progress, string title, string detail, float value)
+        {
+            if (progress != null)
+            {
+                progress(new FigmaImportProgress(title, detail, value));
+            }
         }
     }
 }
