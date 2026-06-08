@@ -16,6 +16,9 @@ namespace FigmaToUGUI.Editor
         private readonly FigmaApiClient client;
         private readonly FigmaImportSettings settings;
         private readonly Dictionary<string, Sprite> spritesByNodeId = new Dictionary<string, Sprite>();
+        private readonly List<PreservedUserChild> preservedUserChildren = new List<PreservedUserChild>();
+        private readonly List<GameObject> preservedEditContainers = new List<GameObject>();
+        private bool prefabFolderReady;
 
         public FigmaToUGUIImporter(FigmaApiClient client, FigmaImportSettings settings)
         {
@@ -33,8 +36,8 @@ namespace FigmaToUGUI.Editor
                 throw new InvalidOperationException("No Figma document was returned.");
             }
 
-            FigmaNode root = ResolveImportRoot(file.document);
-            if (root == null)
+            List<FigmaNode> roots = ResolveImportRoots(file);
+            if (roots.Count == 0)
             {
                 throw new InvalidOperationException("Could not find a visible frame or node to import.");
             }
@@ -43,27 +46,140 @@ namespace FigmaToUGUI.Editor
 
             if (settings.renderUnsupportedNodesAsImages)
             {
-                await PrepareRenderedSpritesAsync(root);
+                for (int i = 0; i < roots.Count; i++)
+                {
+                    Report("Preparing sprites", "Frame " + (i + 1) + "/" + roots.Count + ": " + SafeName(roots[i].name, roots[i].type), 0.18f);
+                    await PrepareRenderedSpritesAsync(roots[i]);
+                }
             }
 
             ThrowIfCancelled();
             Report("Building hierarchy", "Creating Unity UI objects...", 0.75f);
 
             Transform parent = ResolveParent();
-            if (settings.replaceExistingImport)
+            int totalNodes = 0;
+            for (int i = 0; i < roots.Count; i++)
             {
-                parent = ReplaceExistingImport(parent, root);
+                totalNodes += CountImportableNodes(roots[i]);
             }
 
-            int totalNodes = CountImportableNodes(root);
             int createdNodes = 0;
-            GameObject imported = CreateNode(root, parent, null, true, totalNodes, ref createdNodes);
-            imported.name = SafeName(root.name, "Figma Import");
+            List<GameObject> importedRoots = new List<GameObject>();
+            for (int i = 0; i < roots.Count; i++)
+            {
+                FigmaNode root = roots[i];
+                Report("Building hierarchy", "Syncing frame " + (i + 1) + "/" + roots.Count + ": " + SafeName(root.name, root.type), 0.75f);
+                Transform rootParent = parent;
+                if (settings.replaceExistingImport)
+                {
+                    rootParent = ReplaceExistingImport(rootParent, root);
+                }
 
-            Selection.activeGameObject = imported;
-            EditorGUIUtility.PingObject(imported);
-            Report("Import complete", "Imported " + createdNodes + " UI object(s).", 1f);
-            return imported;
+                GameObject imported = CreateNode(root, rootParent, null, true, totalNodes, ref createdNodes);
+                if (imported != null)
+                {
+                    imported.name = SafeName(root.name, "Figma Import");
+                    RestorePreservedUserChildren(imported);
+                    SavePrefabForSyncedRoot(imported, root);
+                    importedRoots.Add(imported);
+                }
+            }
+
+            if (importedRoots.Count == 0)
+            {
+                throw new InvalidOperationException("No importable Figma UI objects were created.");
+            }
+
+            WarnAboutUnrestoredUserChildren();
+            Selection.objects = importedRoots.ToArray();
+            EditorGUIUtility.PingObject(importedRoots[0]);
+            Report("Sync complete", "Synced " + createdNodes + " UI object(s) from " + importedRoots.Count + " root frame(s).", 1f);
+            return importedRoots[0];
+        }
+
+        private List<FigmaNode> ResolveImportRoots(FigmaFile file)
+        {
+            List<FigmaNode> roots = new List<FigmaNode>();
+            if (file == null || file.document == null)
+            {
+                return roots;
+            }
+
+            if (file.hasMultipleSelectedNodes && file.document.children != null)
+            {
+                for (int i = 0; i < file.document.children.Count; i++)
+                {
+                    FigmaNode root = ResolveImportRoot(file.document.children[i]);
+                    if (root != null && root.visible && root.HasBounds)
+                    {
+                        roots.Add(root);
+                    }
+                }
+
+                return roots;
+            }
+
+            if (settings.syncAllTopLevelFrames && string.IsNullOrEmpty(settings.nodeId))
+            {
+                CollectTopLevelSyncRoots(file.document, roots);
+                if (roots.Count > 0)
+                {
+                    return roots;
+                }
+            }
+
+            FigmaNode singleRoot = ResolveImportRoot(file.document);
+            if (singleRoot != null)
+            {
+                roots.Add(singleRoot);
+            }
+
+            return roots;
+        }
+
+        private void CollectTopLevelSyncRoots(FigmaNode node, List<FigmaNode> roots)
+        {
+            if (node == null || node.children == null)
+            {
+                return;
+            }
+
+            if (node.type == "DOCUMENT")
+            {
+                for (int i = 0; i < node.children.Count; i++)
+                {
+                    CollectTopLevelSyncRoots(node.children[i], roots);
+                }
+
+                return;
+            }
+
+            if (node.type == "CANVAS")
+            {
+                for (int i = 0; i < node.children.Count; i++)
+                {
+                    FigmaNode child = node.children[i];
+                    if (IsTopLevelSyncRoot(child))
+                    {
+                        roots.Add(child);
+                    }
+                }
+            }
+        }
+
+        private static bool IsTopLevelSyncRoot(FigmaNode node)
+        {
+            if (node == null || !node.visible || !node.HasBounds)
+            {
+                return false;
+            }
+
+            return node.type == "FRAME" ||
+                   node.type == "COMPONENT" ||
+                   node.type == "COMPONENT_SET" ||
+                   node.type == "INSTANCE" ||
+                   node.type == "GROUP" ||
+                   node.type == "SECTION";
         }
 
         private FigmaNode ResolveImportRoot(FigmaNode document)
@@ -332,6 +448,7 @@ namespace FigmaToUGUI.Editor
             ApplyRect(rect, node, parentBounds, isRoot);
             ApplyMetadata(go, node);
             ApplyLayoutElement(go, node);
+            ApplyRectMask(go, node);
 
             if (!mappedPrefab && node.type == "TEXT")
             {
@@ -357,6 +474,7 @@ namespace FigmaToUGUI.Editor
             }
 
             ApplyAutoLayout(go, node);
+            ApplyInferredInteractiveComponent(go, node);
 
             return go;
         }
@@ -391,7 +509,7 @@ namespace FigmaToUGUI.Editor
             if (mapping == null)
             {
                 GameObject plain = new GameObject(SafeName(node.name, node.type), typeof(RectTransform));
-                Undo.RegisterCreatedObjectUndo(plain, "Import Figma UI");
+                Undo.RegisterCreatedObjectUndo(plain, "Sync Figma UI");
                 return plain;
             }
 
@@ -402,11 +520,11 @@ namespace FigmaToUGUI.Editor
             if (instance == null)
             {
                 GameObject fallback = new GameObject(SafeName(node.name, node.type), typeof(RectTransform));
-                Undo.RegisterCreatedObjectUndo(fallback, "Import Figma UI");
+                Undo.RegisterCreatedObjectUndo(fallback, "Sync Figma UI");
                 return fallback;
             }
 
-            Undo.RegisterCreatedObjectUndo(instance, "Import Figma UI");
+            Undo.RegisterCreatedObjectUndo(instance, "Sync Figma UI");
             instance.name = SafeName(node.name, mapping.prefab.name);
 
             if (instance.GetComponent<RectTransform>() != null)
@@ -415,7 +533,7 @@ namespace FigmaToUGUI.Editor
             }
 
             GameObject wrapper = new GameObject(SafeName(node.name, node.type), typeof(RectTransform));
-            Undo.RegisterCreatedObjectUndo(wrapper, "Import Figma UI");
+            Undo.RegisterCreatedObjectUndo(wrapper, "Sync Figma UI");
             instance.transform.SetParent(wrapper.transform, false);
             return wrapper;
         }
@@ -750,6 +868,281 @@ namespace FigmaToUGUI.Editor
             }
         }
 
+        private void ApplyRectMask(GameObject go, FigmaNode node)
+        {
+            if (!node.clipsContent || go.GetComponent<RectMask2D>() != null)
+            {
+                return;
+            }
+
+            go.AddComponent<RectMask2D>();
+        }
+
+        private void ApplyInferredInteractiveComponent(GameObject go, FigmaNode node)
+        {
+            if (!settings.inferInteractiveComponents || go == null || node == null)
+            {
+                return;
+            }
+
+            string name = NormalizeComponentName(node.name);
+            if (IsScrollViewName(name))
+            {
+                ApplyScrollViewComponent(go);
+                return;
+            }
+
+            if (IsInputFieldName(name))
+            {
+                ApplyInputFieldComponent(go);
+                return;
+            }
+
+            if (IsToggleName(name))
+            {
+                ApplyToggleComponent(go);
+                return;
+            }
+
+            if (IsButtonName(name))
+            {
+                ApplyButtonComponent(go);
+            }
+        }
+
+        private void ApplyButtonComponent(GameObject go)
+        {
+            if (go.GetComponent<Button>() != null)
+            {
+                return;
+            }
+
+            Image target = EnsureRaycastImage(go);
+            Button button = go.AddComponent<Button>();
+            button.targetGraphic = target;
+        }
+
+        private void ApplyToggleComponent(GameObject go)
+        {
+            if (go.GetComponent<Toggle>() != null)
+            {
+                return;
+            }
+
+            Image target = EnsureRaycastImage(go);
+            Toggle toggle = go.AddComponent<Toggle>();
+            toggle.targetGraphic = target;
+            toggle.graphic = EnsureToggleGraphic(go.transform);
+            toggle.isOn = false;
+        }
+
+        private void ApplyInputFieldComponent(GameObject go)
+        {
+            if (go.GetComponent<InputField>() != null)
+            {
+                return;
+            }
+
+            Image target = EnsureRaycastImage(go);
+            Text text = FindTextComponent(go.transform);
+            if (text == null)
+            {
+                text = CreateInputText(go.transform);
+            }
+
+            InputField input = go.AddComponent<InputField>();
+            input.targetGraphic = target;
+            input.textComponent = text;
+            input.lineType = InputField.LineType.SingleLine;
+        }
+
+        private void ApplyScrollViewComponent(GameObject go)
+        {
+            ScrollRect scrollRect = go.GetComponent<ScrollRect>();
+            if (scrollRect == null)
+            {
+                scrollRect = go.AddComponent<ScrollRect>();
+            }
+
+            RectTransform viewport = go.GetComponent<RectTransform>();
+            RectTransform content = EnsureScrollContent(go.transform);
+            scrollRect.viewport = viewport;
+            scrollRect.content = content;
+            scrollRect.horizontal = true;
+            scrollRect.vertical = true;
+            scrollRect.movementType = ScrollRect.MovementType.Clamped;
+
+            if (go.GetComponent<RectMask2D>() == null)
+            {
+                go.AddComponent<RectMask2D>();
+            }
+        }
+
+        private Image EnsureRaycastImage(GameObject go)
+        {
+            Image image = go.GetComponent<Image>();
+            if (image == null)
+            {
+                image = go.AddComponent<Image>();
+                image.color = new Color(1f, 1f, 1f, 0f);
+            }
+
+            image.raycastTarget = true;
+            return image;
+        }
+
+        private Graphic EnsureToggleGraphic(Transform parent)
+        {
+            Transform existing = parent.Find("Checkmark");
+            if (existing != null)
+            {
+                Graphic existingGraphic = existing.GetComponent<Graphic>();
+                if (existingGraphic != null)
+                {
+                    existingGraphic.raycastTarget = false;
+                    return existingGraphic;
+                }
+            }
+
+            GameObject checkmark = new GameObject("Checkmark", typeof(RectTransform), typeof(Image));
+            Undo.RegisterCreatedObjectUndo(checkmark, "Create Toggle Graphic");
+            checkmark.transform.SetParent(parent, false);
+
+            RectTransform rect = checkmark.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(0f, 0.5f);
+            rect.anchorMax = new Vector2(0f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = new Vector2(12f, 0f);
+            rect.sizeDelta = new Vector2(12f, 12f);
+
+            Image image = checkmark.GetComponent<Image>();
+            image.color = Color.white;
+            image.raycastTarget = false;
+            return image;
+        }
+
+        private Text FindTextComponent(Transform root)
+        {
+            Text text = root.GetComponentInChildren<Text>(true);
+            if (text != null)
+            {
+                text.raycastTarget = false;
+            }
+
+            return text;
+        }
+
+        private Text CreateInputText(Transform parent)
+        {
+            GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
+            Undo.RegisterCreatedObjectUndo(textGo, "Create InputField Text");
+            textGo.transform.SetParent(parent, false);
+
+            RectTransform rect = textGo.GetComponent<RectTransform>();
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = new Vector2(8f, 4f);
+            rect.offsetMax = new Vector2(-8f, -4f);
+
+            Text text = textGo.GetComponent<Text>();
+            text.text = string.Empty;
+            text.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            text.fontSize = 14;
+            text.color = Color.black;
+            text.alignment = TextAnchor.MiddleLeft;
+            text.raycastTarget = false;
+            return text;
+        }
+
+        private RectTransform EnsureScrollContent(Transform viewport)
+        {
+            Transform existing = viewport.Find("Content");
+            RectTransform existingRect = existing as RectTransform;
+            if (existingRect != null)
+            {
+                return existingRect;
+            }
+
+            GameObject contentGo = new GameObject("Content", typeof(RectTransform));
+            Undo.RegisterCreatedObjectUndo(contentGo, "Create ScrollView Content");
+            RectTransform content = contentGo.GetComponent<RectTransform>();
+            content.SetParent(viewport, false);
+            content.anchorMin = Vector2.zero;
+            content.anchorMax = Vector2.one;
+            content.pivot = new Vector2(0f, 1f);
+            content.offsetMin = Vector2.zero;
+            content.offsetMax = Vector2.zero;
+
+            List<Transform> children = new List<Transform>();
+            for (int i = 0; i < viewport.childCount; i++)
+            {
+                Transform child = viewport.GetChild(i);
+                if (child != content)
+                {
+                    children.Add(child);
+                }
+            }
+
+            for (int i = 0; i < children.Count; i++)
+            {
+                children[i].SetParent(content, true);
+            }
+
+            RectTransform viewportRect = viewport as RectTransform;
+            if (viewportRect != null)
+            {
+                content.sizeDelta = viewportRect.rect.size;
+            }
+
+            return content;
+        }
+
+        private static string NormalizeComponentName(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return string.Empty;
+            }
+
+            return value.Replace("_", string.Empty)
+                .Replace("-", string.Empty)
+                .Replace(" ", string.Empty)
+                .Replace("/", string.Empty)
+                .ToLowerInvariant();
+        }
+
+        private static bool IsButtonName(string name)
+        {
+            return ContainsComponentToken(name, "button") || ContainsComponentToken(name, "btn");
+        }
+
+        private static bool IsToggleName(string name)
+        {
+            return ContainsComponentToken(name, "toggle") ||
+                   ContainsComponentToken(name, "checkbox") ||
+                   ContainsComponentToken(name, "switch");
+        }
+
+        private static bool IsInputFieldName(string name)
+        {
+            return ContainsComponentToken(name, "inputfield") ||
+                   ContainsComponentToken(name, "textfield") ||
+                   ContainsComponentToken(name, "textbox") ||
+                   ContainsComponentToken(name, "searchfield");
+        }
+
+        private static bool IsScrollViewName(string name)
+        {
+            return ContainsComponentToken(name, "scrollview") ||
+                   ContainsComponentToken(name, "scrollrect") ||
+                   ContainsComponentToken(name, "scrollarea");
+        }
+
+        private static bool ContainsComponentToken(string name, string token)
+        {
+            return !string.IsNullOrEmpty(name) && name.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private bool ShouldHaveColorImage(FigmaNode node)
         {
             if (node.type == "FRAME" || node.type == "COMPONENT" || node.type == "INSTANCE" ||
@@ -931,12 +1324,181 @@ namespace FigmaToUGUI.Editor
                 FigmaImportedNode metadata = importedNodes[i];
                 if (metadata.fileKey == settings.fileKey && metadata.nodeId == root.id)
                 {
+                    PreserveUserChildrenBeforeReplace(metadata.gameObject, parent);
                     Undo.DestroyObjectImmediate(metadata.gameObject);
                     break;
                 }
             }
 
             return parent;
+        }
+
+        private void SavePrefabForSyncedRoot(GameObject importedRoot, FigmaNode root)
+        {
+            if (!settings.createPrefabsForSyncedRoots || importedRoot == null || root == null)
+            {
+                return;
+            }
+
+            string folder = NormalizeAssetFolder(settings.outputFolder).TrimEnd('/') + "/Prefabs";
+            EnsurePrefabFolder(folder);
+            string path = folder + "/" + MakeAssetSafeName(SafeName(root.name, "Figma Import") + "_" + root.id) + ".prefab";
+            FigmaImportedNode metadata = importedRoot.GetComponent<FigmaImportedNode>();
+            if (metadata != null)
+            {
+                metadata.prefabAssetPath = path;
+                metadata.prefabSavedAtUtc = DateTime.UtcNow.ToString("o");
+            }
+
+            Report("Saving prefab", "Updating prefab " + path + "...", 0.99f);
+            PrefabUtility.SaveAsPrefabAssetAndConnect(importedRoot, path, InteractionMode.AutomatedAction);
+        }
+
+        private void EnsurePrefabFolder(string folder)
+        {
+            if (prefabFolderReady)
+            {
+                return;
+            }
+
+            folder = NormalizeAssetFolder(folder).TrimEnd('/');
+            Directory.CreateDirectory(Path.GetFullPath(folder));
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+            prefabFolderReady = true;
+        }
+
+        private void PreserveUserChildrenBeforeReplace(GameObject replacedRoot, Transform replacementParent)
+        {
+            if (!settings.preserveUserChildrenOnResync || replacedRoot == null)
+            {
+                return;
+            }
+
+            FigmaImportedNode[] generatedNodes = replacedRoot.GetComponentsInChildren<FigmaImportedNode>(true);
+            List<PreservedUserChild> userChildren = new List<PreservedUserChild>();
+            for (int i = 0; i < generatedNodes.Length; i++)
+            {
+                CollectDirectUserChildren(generatedNodes[i], userChildren);
+            }
+
+            if (userChildren.Count == 0)
+            {
+                return;
+            }
+
+            Transform preserveParent = CreatePreservedEditsContainer(replacedRoot.name, replacementParent);
+            for (int i = 0; i < userChildren.Count; i++)
+            {
+                PreservedUserChild child = userChildren[i];
+                Undo.SetTransformParent(child.transform, preserveParent, "Preserve Figma UI Edits");
+                preservedUserChildren.Add(child);
+            }
+        }
+
+        private void CollectDirectUserChildren(FigmaImportedNode generatedNode, List<PreservedUserChild> userChildren)
+        {
+            if (generatedNode == null || string.IsNullOrEmpty(generatedNode.nodeId))
+            {
+                return;
+            }
+
+            Transform parent = generatedNode.transform;
+            for (int i = 0; i < parent.childCount; i++)
+            {
+                Transform child = parent.GetChild(i);
+                if (IsPreservableUserChild(child))
+                {
+                    userChildren.Add(new PreservedUserChild(generatedNode.nodeId, child, child.GetSiblingIndex()));
+                }
+            }
+        }
+
+        private static bool IsPreservableUserChild(Transform child)
+        {
+            if (child == null ||
+                child.GetComponent<FigmaImportedNode>() != null ||
+                child.GetComponentInChildren<FigmaImportedNode>(true) != null)
+            {
+                return false;
+            }
+
+            return !PrefabUtility.IsPartOfPrefabInstance(child.gameObject);
+        }
+
+        private void RestorePreservedUserChildren(GameObject importedRoot)
+        {
+            if (preservedUserChildren.Count == 0 || importedRoot == null)
+            {
+                return;
+            }
+
+            Dictionary<string, Transform> generatedByNodeId = new Dictionary<string, Transform>();
+            FigmaImportedNode[] generatedNodes = importedRoot.GetComponentsInChildren<FigmaImportedNode>(true);
+            for (int i = 0; i < generatedNodes.Length; i++)
+            {
+                FigmaImportedNode generatedNode = generatedNodes[i];
+                if (generatedNode != null && !string.IsNullOrEmpty(generatedNode.nodeId) && !generatedByNodeId.ContainsKey(generatedNode.nodeId))
+                {
+                    generatedByNodeId[generatedNode.nodeId] = generatedNode.transform;
+                }
+            }
+
+            for (int i = preservedUserChildren.Count - 1; i >= 0; i--)
+            {
+                PreservedUserChild child = preservedUserChildren[i];
+                Transform restoredParent;
+                if (!generatedByNodeId.TryGetValue(child.parentNodeId, out restoredParent))
+                {
+                    continue;
+                }
+
+                child.RestoreTo(restoredParent);
+                preservedUserChildren.RemoveAt(i);
+            }
+
+            CleanupEmptyPreservedEditContainers();
+        }
+
+        private Transform CreatePreservedEditsContainer(string rootName, Transform replacementParent)
+        {
+            GameObject container = replacementParent is RectTransform
+                ? new GameObject("Preserved Edits - " + SafeName(rootName, "Figma Import"), typeof(RectTransform))
+                : new GameObject("Preserved Edits - " + SafeName(rootName, "Figma Import"));
+
+            Undo.RegisterCreatedObjectUndo(container, "Preserve Figma UI Edits");
+            if (replacementParent != null)
+            {
+                container.transform.SetParent(replacementParent, false);
+            }
+
+            preservedEditContainers.Add(container);
+            return container.transform;
+        }
+
+        private void CleanupEmptyPreservedEditContainers()
+        {
+            for (int i = preservedEditContainers.Count - 1; i >= 0; i--)
+            {
+                GameObject container = preservedEditContainers[i];
+                if (container == null || container.transform.childCount > 0)
+                {
+                    continue;
+                }
+
+                Undo.DestroyObjectImmediate(container);
+                preservedEditContainers.RemoveAt(i);
+            }
+        }
+
+        private void WarnAboutUnrestoredUserChildren()
+        {
+            if (preservedUserChildren.Count == 0)
+            {
+                return;
+            }
+
+            Debug.LogWarning("Figma to UGUI preserved " + preservedUserChildren.Count +
+                             " user-added child object(s) in Preserved Edits containers because their original Figma node IDs were not found in the new sync result.");
         }
 
         private void ApplyMetadata(GameObject go, FigmaNode node)
@@ -1108,6 +1670,68 @@ namespace FigmaToUGUI.Editor
             public FigmaNode node;
             public byte[] bytes;
             public string assetPath;
+        }
+
+        private sealed class PreservedUserChild
+        {
+            public readonly string parentNodeId;
+            public readonly Transform transform;
+            private readonly int siblingIndex;
+            private readonly Vector3 localPosition;
+            private readonly Quaternion localRotation;
+            private readonly Vector3 localScale;
+            private readonly bool isRectTransform;
+            private readonly Vector2 anchorMin;
+            private readonly Vector2 anchorMax;
+            private readonly Vector2 anchoredPosition;
+            private readonly Vector2 sizeDelta;
+            private readonly Vector2 pivot;
+            private readonly Vector2 offsetMin;
+            private readonly Vector2 offsetMax;
+
+            public PreservedUserChild(string parentNodeId, Transform transform, int siblingIndex)
+            {
+                this.parentNodeId = parentNodeId;
+                this.transform = transform;
+                this.siblingIndex = siblingIndex;
+                localPosition = transform.localPosition;
+                localRotation = transform.localRotation;
+                localScale = transform.localScale;
+
+                RectTransform rectTransform = transform as RectTransform;
+                isRectTransform = rectTransform != null;
+                if (isRectTransform)
+                {
+                    anchorMin = rectTransform.anchorMin;
+                    anchorMax = rectTransform.anchorMax;
+                    anchoredPosition = rectTransform.anchoredPosition;
+                    sizeDelta = rectTransform.sizeDelta;
+                    pivot = rectTransform.pivot;
+                    offsetMin = rectTransform.offsetMin;
+                    offsetMax = rectTransform.offsetMax;
+                }
+            }
+
+            public void RestoreTo(Transform parent)
+            {
+                Undo.SetTransformParent(transform, parent, "Restore Figma UI Edits");
+                transform.SetSiblingIndex(Mathf.Min(siblingIndex, parent.childCount - 1));
+                transform.localPosition = localPosition;
+                transform.localRotation = localRotation;
+                transform.localScale = localScale;
+
+                RectTransform rectTransform = transform as RectTransform;
+                if (isRectTransform && rectTransform != null)
+                {
+                    rectTransform.anchorMin = anchorMin;
+                    rectTransform.anchorMax = anchorMax;
+                    rectTransform.anchoredPosition = anchoredPosition;
+                    rectTransform.sizeDelta = sizeDelta;
+                    rectTransform.pivot = pivot;
+                    rectTransform.offsetMin = offsetMin;
+                    rectTransform.offsetMax = offsetMax;
+                }
+            }
         }
 
     }

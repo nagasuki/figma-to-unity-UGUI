@@ -9,6 +9,7 @@ namespace FigmaToUGUI.Editor
     {
         public string name;
         public FigmaNode document;
+        public bool hasMultipleSelectedNodes;
     }
 
     [Serializable]
@@ -25,6 +26,7 @@ namespace FigmaToUGUI.Editor
         public List<FigmaPaint> fills = new List<FigmaPaint>();
         public List<FigmaPaint> strokes = new List<FigmaPaint>();
         public FigmaTypeStyle style;
+        public bool clipsContent;
         public string layoutMode;
         public string primaryAxisSizingMode;
         public string counterAxisSizingMode;
@@ -137,17 +139,50 @@ namespace FigmaToUGUI.Editor
             if (!string.IsNullOrEmpty(selectedNodeId) && root.ContainsKey("nodes"))
             {
                 Dictionary<string, object> nodes = root["nodes"] as Dictionary<string, object>;
-                if (nodes == null || !nodes.ContainsKey(selectedNodeId))
+                List<string> selectedNodeIds = SplitNodeIds(selectedNodeId);
+                if (nodes == null || selectedNodeIds.Count == 0)
                 {
                     throw new InvalidOperationException("The selected node id was not found in the Figma response.");
                 }
 
-                Dictionary<string, object> nodePayload = nodes[selectedNodeId] as Dictionary<string, object>;
-                Dictionary<string, object> document = nodePayload != null && nodePayload.ContainsKey("document")
-                    ? nodePayload["document"] as Dictionary<string, object>
-                    : null;
+                if (selectedNodeIds.Count > 1)
+                {
+                    FigmaNode selectedNodesRoot = new FigmaNode
+                    {
+                        id = "selected-nodes",
+                        name = string.IsNullOrEmpty(file.name) ? "Selected Figma Nodes" : file.name,
+                        type = "DOCUMENT",
+                        visible = true
+                    };
 
-                file.document = ParseNode(document);
+                    for (int i = 0; i < selectedNodeIds.Count; i++)
+                    {
+                        string nodeId = selectedNodeIds[i];
+                        if (!nodes.ContainsKey(nodeId))
+                        {
+                            throw new InvalidOperationException("The selected node id was not found in the Figma response: " + nodeId);
+                        }
+
+                        FigmaNode node = ParseSelectedNode(nodes[nodeId] as Dictionary<string, object>);
+                        if (node != null)
+                        {
+                            selectedNodesRoot.children.Add(node);
+                        }
+                    }
+
+                    file.document = selectedNodesRoot;
+                    file.hasMultipleSelectedNodes = true;
+                }
+                else
+                {
+                    string nodeId = selectedNodeIds[0];
+                    if (!nodes.ContainsKey(nodeId))
+                    {
+                        throw new InvalidOperationException("The selected node id was not found in the Figma response.");
+                    }
+
+                    file.document = ParseSelectedNode(nodes[nodeId] as Dictionary<string, object>);
+                }
             }
             else
             {
@@ -155,6 +190,36 @@ namespace FigmaToUGUI.Editor
             }
 
             return file;
+        }
+
+        private static FigmaNode ParseSelectedNode(Dictionary<string, object> nodePayload)
+        {
+            Dictionary<string, object> document = nodePayload != null && nodePayload.ContainsKey("document")
+                ? nodePayload["document"] as Dictionary<string, object>
+                : null;
+
+            return ParseNode(document);
+        }
+
+        private static List<string> SplitNodeIds(string value)
+        {
+            List<string> nodeIds = new List<string>();
+            if (string.IsNullOrEmpty(value))
+            {
+                return nodeIds;
+            }
+
+            string[] parts = value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string nodeId = parts[i].Trim();
+                if (!string.IsNullOrEmpty(nodeId))
+                {
+                    nodeIds.Add(nodeId);
+                }
+            }
+
+            return nodeIds;
         }
 
         private static FigmaNode ParseNode(Dictionary<string, object> data)
@@ -175,6 +240,7 @@ namespace FigmaToUGUI.Editor
             node.fills = ReadPaints(data, "fills");
             node.strokes = ReadPaints(data, "strokes");
             node.style = ReadTypeStyle(data, "style");
+            node.clipsContent = ReadBool(data, "clipsContent", false);
             node.layoutMode = ReadString(data, "layoutMode");
             node.primaryAxisSizingMode = ReadString(data, "primaryAxisSizingMode");
             node.counterAxisSizingMode = ReadString(data, "counterAxisSizingMode");

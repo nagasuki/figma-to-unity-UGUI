@@ -19,11 +19,12 @@ README.md
 1. Open `Tools/Figma/Import to UGUI`.
 2. Paste a Figma personal access token.
 3. Paste a Figma file URL, design URL, or file key.
-4. Optionally paste a Figma node id or a full node URL.
+4. Optionally paste one or more Figma node IDs, or a full node URL.
 5. Select a target `RectTransform`, or let the importer create/use a `Canvas`.
-6. Click `Import Figma UI`.
+6. Click `Sync Figma UI`.
 
 Projects with Odin Inspector installed can also open `Tools/Figma/Import to UGUI (Odin)`.
+Enable `Sync all top-level frames when no Node IDs are set` to batch sync every top-level frame on the downloaded Figma page/file.
 
 ## Profiles
 
@@ -35,7 +36,21 @@ Profiles can configure:
 - TextMeshPro font asset mappings.
 - Layer-name to prefab mappings.
 - Layer-name to nine-slice sprite border rules.
-- Default toggles for Auto Layout, constraints, and re-import metadata.
+- Default toggles for Auto Layout, constraints, component inference, prefab creation, preserved user children, and re-import metadata.
+
+## Component Inference
+
+When component inference is enabled, layer or component names containing common tokens are converted to basic UGUI controls:
+
+- `button` or `btn` adds a `Button`.
+- `toggle`, `checkbox`, or `switch` adds a `Toggle`.
+- `inputfield`, `textfield`, `textbox`, or `searchfield` adds an `InputField`.
+- `scrollview`, `scrollrect`, or `scrollarea` adds a `ScrollRect`.
+
+## Prefab Creation
+
+Enable `Create or update prefabs for synced roots` to save each synced root frame as a prefab in `Output Folder/Prefabs`.
+Prefab asset paths are stable across syncs and include the Figma node ID.
 
 ## Speed Options
 

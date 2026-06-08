@@ -10,8 +10,11 @@ namespace FigmaToUGUI
         public bool useTextMeshPro;
         public bool applyAutoLayout = true;
         public bool applyConstraints = true;
+        public bool inferInteractiveComponents = true;
         public bool stretchRootToParent = true;
+        public bool createPrefabsForSyncedRoots;
         public bool replaceExistingImport = true;
+        public bool preserveUserChildrenOnResync = true;
         public bool addImportMetadata = true;
         public Font defaultLegacyFont;
         public UnityEngine.Object defaultTextMeshProFontAsset;

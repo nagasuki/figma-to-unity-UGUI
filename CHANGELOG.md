@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 - 2026-06-08
+
+- Added Sync wording in the editor window and docs.
+- Added batch sync for multiple explicit Figma node IDs in one run.
+- Added optional full-file sync for every top-level frame, with per-frame progress messages.
+- Added initial edit-preserving re-sync behavior for user-added children under generated nodes.
+- Added RectMask2D import for Figma nodes with clipped content.
+- Added rule-based inference for UGUI Button, Toggle, InputField, and ScrollRect components.
+- Added optional prefab creation for synced root frames.
+- Added an implementation roadmap for the larger product feature set.
+
 ## 0.4.0
 
 - Added responsive root stretching so imported screens can fill the selected parent or Canvas.

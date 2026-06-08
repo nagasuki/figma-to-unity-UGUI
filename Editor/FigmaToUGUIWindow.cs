@@ -52,11 +52,15 @@ namespace FigmaToUGUI.Editor
         private const string ProfilePrefsKey = "FigmaToUGUI.Profile";
         private const string ReuseGeneratedSpritesPrefsKey = "FigmaToUGUI.ReuseGeneratedSprites";
         private const string CollapseVectorSubtreesPrefsKey = "FigmaToUGUI.CollapseVectorSubtrees";
+        private const string SyncAllTopLevelFramesPrefsKey = "FigmaToUGUI.SyncAllTopLevelFrames";
         private const string UseTextMeshProPrefsKey = "FigmaToUGUI.UseTextMeshPro";
         private const string ApplyAutoLayoutPrefsKey = "FigmaToUGUI.ApplyAutoLayout";
         private const string ApplyConstraintsPrefsKey = "FigmaToUGUI.ApplyConstraints";
+        private const string InferInteractiveComponentsPrefsKey = "FigmaToUGUI.InferInteractiveComponents";
         private const string StretchRootPrefsKey = "FigmaToUGUI.StretchRoot";
+        private const string CreatePrefabsPrefsKey = "FigmaToUGUI.CreatePrefabs";
         private const string ReplaceExistingPrefsKey = "FigmaToUGUI.ReplaceExisting";
+        private const string PreserveUserChildrenPrefsKey = "FigmaToUGUI.PreserveUserChildren";
         private const string AddMetadataPrefsKey = "FigmaToUGUI.AddMetadata";
 
         private string accessToken;
@@ -69,11 +73,15 @@ namespace FigmaToUGUI.Editor
         private bool reuseGeneratedSprites = true;
         private bool collapseVectorSubtrees = true;
         private bool addCanvasIfNeeded = true;
+        private bool syncAllTopLevelFrames;
         private bool useTextMeshPro;
         private bool applyAutoLayout = true;
         private bool applyConstraints = true;
+        private bool inferInteractiveComponents = true;
         private bool stretchRootToParent = true;
+        private bool createPrefabsForSyncedRoots;
         private bool replaceExistingImport = true;
+        private bool preserveUserChildrenOnResync = true;
         private bool addImportMetadata = true;
         private bool isImporting;
         private CancellationTokenSource cancellationTokenSource;
@@ -94,11 +102,15 @@ namespace FigmaToUGUI.Editor
             outputFolder = EditorPrefs.GetString(OutputPrefsKey, "Assets/FigmaToUGUI/Generated");
             reuseGeneratedSprites = EditorPrefs.GetBool(ReuseGeneratedSpritesPrefsKey, true);
             collapseVectorSubtrees = EditorPrefs.GetBool(CollapseVectorSubtreesPrefsKey, true);
+            syncAllTopLevelFrames = EditorPrefs.GetBool(SyncAllTopLevelFramesPrefsKey, false);
             useTextMeshPro = EditorPrefs.GetBool(UseTextMeshProPrefsKey, false);
             applyAutoLayout = EditorPrefs.GetBool(ApplyAutoLayoutPrefsKey, true);
             applyConstraints = EditorPrefs.GetBool(ApplyConstraintsPrefsKey, true);
+            inferInteractiveComponents = EditorPrefs.GetBool(InferInteractiveComponentsPrefsKey, true);
             stretchRootToParent = EditorPrefs.GetBool(StretchRootPrefsKey, true);
+            createPrefabsForSyncedRoots = EditorPrefs.GetBool(CreatePrefabsPrefsKey, false);
             replaceExistingImport = EditorPrefs.GetBool(ReplaceExistingPrefsKey, true);
+            preserveUserChildrenOnResync = EditorPrefs.GetBool(PreserveUserChildrenPrefsKey, true);
             addImportMetadata = EditorPrefs.GetBool(AddMetadataPrefsKey, true);
             string profileGuid = EditorPrefs.GetString(ProfilePrefsKey, string.Empty);
             if (!string.IsNullOrEmpty(profileGuid))
@@ -123,7 +135,7 @@ namespace FigmaToUGUI.Editor
                 EditorGUILayout.LabelField("Figma Source", EditorStyles.boldLabel);
                 accessToken = EditorGUILayout.PasswordField("Access Token", accessToken);
                 fileInput = EditorGUILayout.TextField("File URL or Key", fileInput);
-                nodeId = EditorGUILayout.TextField("Node ID (optional)", nodeId);
+                nodeId = EditorGUILayout.TextField("Node IDs (optional)", nodeId);
 
                 EditorGUILayout.Space(8f);
                 EditorGUILayout.LabelField("Unity Output", EditorStyles.boldLabel);
@@ -145,7 +157,13 @@ namespace FigmaToUGUI.Editor
                 }
 
                 addCanvasIfNeeded = EditorGUILayout.ToggleLeft("Create or use a Canvas when no parent is selected", addCanvasIfNeeded);
+                syncAllTopLevelFrames = EditorGUILayout.ToggleLeft("Sync all top-level frames when no Node IDs are set", syncAllTopLevelFrames);
                 replaceExistingImport = EditorGUILayout.ToggleLeft("Replace previous import from the same Figma node", replaceExistingImport);
+                using (new EditorGUI.DisabledScope(!replaceExistingImport))
+                {
+                    preserveUserChildrenOnResync = EditorGUILayout.ToggleLeft("Preserve user-added children on re-sync", preserveUserChildrenOnResync);
+                }
+
                 addImportMetadata = EditorGUILayout.ToggleLeft("Add Figma import metadata to generated objects", addImportMetadata);
 
                 EditorGUILayout.Space(8f);
@@ -162,12 +180,14 @@ namespace FigmaToUGUI.Editor
 
                 applyAutoLayout = EditorGUILayout.ToggleLeft("Convert Figma Auto Layout to Unity Layout Groups", applyAutoLayout);
                 applyConstraints = EditorGUILayout.ToggleLeft("Convert Figma Constraints to RectTransform anchors", applyConstraints);
+                inferInteractiveComponents = EditorGUILayout.ToggleLeft("Infer Button, Toggle, InputField, and ScrollView components", inferInteractiveComponents);
                 stretchRootToParent = EditorGUILayout.ToggleLeft("Stretch imported root to parent/canvas", stretchRootToParent);
+                createPrefabsForSyncedRoots = EditorGUILayout.ToggleLeft("Create or update prefabs for synced roots", createPrefabsForSyncedRoots);
             }
 
             EditorGUILayout.Space(8f);
             EditorGUILayout.HelpBox(
-                "Select an existing RectTransform before importing to place the Figma UI under it. A profile can map Figma font families, layer names to prefabs, and layer names to nine-slice sprite borders.",
+                "Select an existing RectTransform before syncing to place the Figma UI under it. Node IDs can be comma, space, or newline separated. A profile can map Figma font families, layer names to prefabs, and layer names to nine-slice sprite borders.",
                 MessageType.Info);
 
             if (isImporting)
@@ -176,7 +196,7 @@ namespace FigmaToUGUI.Editor
             }
             else
             {
-                if (GUILayout.Button("Import Figma UI", GUILayout.Height(36f)))
+                if (GUILayout.Button("Sync Figma UI", GUILayout.Height(36f)))
                 {
                     _ = ImportAsync();
                 }
@@ -190,10 +210,10 @@ namespace FigmaToUGUI.Editor
         private async Task ImportAsync()
         {
             string fileKey = ExtractFileKey(fileInput);
-            string normalizedNodeId = NormalizeNodeId(nodeId);
+            string normalizedNodeId = NormalizeNodeIds(nodeId);
             if (string.IsNullOrEmpty(normalizedNodeId))
             {
-                normalizedNodeId = NormalizeNodeId(ExtractNodeId(fileInput));
+                normalizedNodeId = NormalizeNodeIds(ExtractNodeId(fileInput));
             }
 
             if (string.IsNullOrEmpty(accessToken))
@@ -214,8 +234,8 @@ namespace FigmaToUGUI.Editor
 
             isImporting = true;
             cancellationTokenSource = new CancellationTokenSource();
-            status = "Starting import...";
-            SetProgress(new FigmaImportProgress("Starting import", "Preparing request...", 0f));
+            status = "Starting sync...";
+            SetProgress(new FigmaImportProgress("Starting sync", "Preparing request...", 0f));
             Repaint();
 
             try
@@ -230,11 +250,15 @@ namespace FigmaToUGUI.Editor
                     reuseGeneratedSprites = reuseGeneratedSprites,
                     collapseVectorSubtrees = collapseVectorSubtrees,
                     addCanvasIfNeeded = addCanvasIfNeeded,
+                    syncAllTopLevelFrames = syncAllTopLevelFrames,
                     useTextMeshPro = useTextMeshPro,
                     applyAutoLayout = applyAutoLayout && (profile == null || profile.applyAutoLayout),
                     applyConstraints = applyConstraints && (profile == null || profile.applyConstraints),
+                    inferInteractiveComponents = inferInteractiveComponents && (profile == null || profile.inferInteractiveComponents),
                     stretchRootToParent = stretchRootToParent && (profile == null || profile.stretchRootToParent),
+                    createPrefabsForSyncedRoots = createPrefabsForSyncedRoots && (profile == null || profile.createPrefabsForSyncedRoots),
                     replaceExistingImport = replaceExistingImport && (profile == null || profile.replaceExistingImport),
+                    preserveUserChildrenOnResync = preserveUserChildrenOnResync && (profile == null || profile.preserveUserChildrenOnResync),
                     addImportMetadata = addImportMetadata && (profile == null || profile.addImportMetadata),
                     profile = profile,
                     parent = Selection.activeTransform is RectTransform ? Selection.activeTransform : null,
@@ -247,11 +271,11 @@ namespace FigmaToUGUI.Editor
 
                 FigmaToUGUIImporter importer = new FigmaToUGUIImporter(client, settings);
                 GameObject imported = await importer.ImportAsync(file);
-                status = "Imported " + imported.name + ".";
+                status = "Synced " + imported.name + ".";
             }
             catch (OperationCanceledException)
             {
-                status = "Import cancelled.";
+                status = "Sync cancelled.";
             }
             catch (Exception ex)
             {
@@ -276,7 +300,7 @@ namespace FigmaToUGUI.Editor
         {
             if (cancellationTokenSource != null && !cancellationTokenSource.IsCancellationRequested)
             {
-                status = "Cancelling import...";
+                status = "Cancelling sync...";
                 cancellationTokenSource.Cancel();
                 Repaint();
             }
@@ -323,11 +347,15 @@ namespace FigmaToUGUI.Editor
             EditorPrefs.SetString(OutputPrefsKey, outputFolder);
             EditorPrefs.SetBool(ReuseGeneratedSpritesPrefsKey, reuseGeneratedSprites);
             EditorPrefs.SetBool(CollapseVectorSubtreesPrefsKey, collapseVectorSubtrees);
+            EditorPrefs.SetBool(SyncAllTopLevelFramesPrefsKey, syncAllTopLevelFrames);
             EditorPrefs.SetBool(UseTextMeshProPrefsKey, useTextMeshPro);
             EditorPrefs.SetBool(ApplyAutoLayoutPrefsKey, applyAutoLayout);
             EditorPrefs.SetBool(ApplyConstraintsPrefsKey, applyConstraints);
+            EditorPrefs.SetBool(InferInteractiveComponentsPrefsKey, inferInteractiveComponents);
             EditorPrefs.SetBool(StretchRootPrefsKey, stretchRootToParent);
+            EditorPrefs.SetBool(CreatePrefabsPrefsKey, createPrefabsForSyncedRoots);
             EditorPrefs.SetBool(ReplaceExistingPrefsKey, replaceExistingImport);
+            EditorPrefs.SetBool(PreserveUserChildrenPrefsKey, preserveUserChildrenOnResync);
             EditorPrefs.SetBool(AddMetadataPrefsKey, addImportMetadata);
 
             string path = profile != null ? AssetDatabase.GetAssetPath(profile) : string.Empty;
@@ -400,7 +428,7 @@ namespace FigmaToUGUI.Editor
             return urlNode.Success ? urlNode.Groups[1].Value : string.Empty;
         }
 
-        private static string NormalizeNodeId(string value)
+        private static string NormalizeNodeIds(string value)
         {
             if (string.IsNullOrEmpty(value))
             {
@@ -414,7 +442,13 @@ namespace FigmaToUGUI.Editor
                 value = Uri.UnescapeDataString(urlNode.Groups[1].Value);
             }
 
-            return value.Replace('-', ':');
+            string[] parts = Regex.Split(value, @"[\s,;]+");
+            for (int i = 0; i < parts.Length; i++)
+            {
+                parts[i] = parts[i].Trim().Replace('-', ':');
+            }
+
+            return string.Join(",", Array.FindAll(parts, part => !string.IsNullOrEmpty(part)));
         }
     }
 }

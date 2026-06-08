@@ -10,5 +10,7 @@ namespace FigmaToUGUI
         public string nodeName;
         public string nodeType;
         public string importedAtUtc;
+        public string prefabAssetPath;
+        public string prefabSavedAtUtc;
     }
 }
