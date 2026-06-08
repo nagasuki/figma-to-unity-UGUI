@@ -1,33 +1,29 @@
-# figma-to-unity-UGUI
+# Figma to Unity UGUI
 
-Reusable Unity Package Manager package for importing a Figma frame into a Unity UGUI hierarchy.
+UPM package for importing a Figma frame into a Unity UGUI hierarchy.
 
-Package path:
-
-```text
-Packages/com.mano.figma-to-ugui
-```
-
-## Install in another project
+## Install
 
 Use one of these options:
 
 - Copy `Packages/com.mano.figma-to-ugui` into another Unity project's `Packages` folder.
-- In Unity Package Manager, choose `Add package from disk...` and select `Packages/com.mano.figma-to-ugui/package.json`.
-- Push this repo to Git and add it through Unity Package Manager as a Git package with `?path=/Packages/com.mano.figma-to-ugui`.
+- Add this repository through Unity Package Manager using a Git URL.
+- Add a local package from Unity Package Manager and pick `Packages/com.mano.figma-to-ugui/package.json`.
+
+For Git installs, use a URL with `?path=/Packages/com.mano.figma-to-ugui`.
 
 ## Use
 
 1. Open `Tools/Figma/Import to UGUI`.
 2. Paste a Figma personal access token.
 3. Paste a Figma file URL, design URL, or file key.
-4. Optionally paste a Figma node id or full node URL.
-5. Select a target `RectTransform`, or let the tool create/use a `Canvas`.
+4. Optionally paste a Figma node id or a full node URL.
+5. Select a target `RectTransform`, or let the importer create/use a `Canvas`.
 6. Click `Import Figma UI`.
 
-Generated PNG sprites are written to `Assets/FigmaToUGUI/Generated` in the consuming Unity project. The package code stays reusable and clean.
+Generated sprite assets are written to the Unity project under `Assets/FigmaToUGUI/Generated` by default, because package folders should stay read-only/reusable.
 
-## Current scope
+## Current mapping
 
 - Figma frames, groups, components, and instances become `RectTransform` GameObjects.
 - Solid fills become UGUI `Image` colors.
@@ -41,4 +37,9 @@ Generated PNG sprites are written to `Assets/FigmaToUGUI/Generated` in the consu
 - Imported nodes can store metadata for replacing a previous import from the same Figma node.
 - Image fills, vectors, lines, stars, polygons, boolean operations, and complex shapes can be rendered as PNG sprites through Figma's image endpoint.
 
-Future upgrades can add design tokens/variables, richer component overrides, and prototype interaction import.
+## Design tips
+
+- Treat each Unity screen or panel as a top-level Figma frame.
+- Keep layer names readable; names become Unity GameObject names.
+- Use solid rectangles for panels/buttons when you want editable UGUI objects.
+- Use image/vector layers when a baked sprite is acceptable.
