@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Improved import speed by downloading generated sprites with limited concurrency.
+- Improved import speed by batching generated PNG asset import and importer setting updates.
+- Removed an unnecessary early `AssetDatabase.Refresh` during import setup.
+
 ## 0.3.0
 
 - Added Unity Editor progress UI with `EditorUtility.DisplayCancelableProgressBar`.

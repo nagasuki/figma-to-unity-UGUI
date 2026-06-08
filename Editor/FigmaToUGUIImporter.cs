@@ -11,6 +11,8 @@ namespace FigmaToUGUI.Editor
 {
     internal sealed class FigmaToUGUIImporter
     {
+        private const int MaxConcurrentSpriteDownloads = 4;
+
         private readonly FigmaApiClient client;
         private readonly FigmaImportSettings settings;
         private readonly Dictionary<string, Sprite> spritesByNodeId = new Dictionary<string, Sprite>();
@@ -110,26 +112,55 @@ namespace FigmaToUGUI.Editor
 
             Dictionary<string, string> urls = await client.GetNodeImageUrlsAsync(settings.fileKey, nodeIds, settings.imageScale, settings.cancellationToken, settings.progress);
             int skippedSprites = 0;
-            for (int i = 0; i < renderNodes.Count; i++)
+            List<SpriteImportRecord> records = new List<SpriteImportRecord>();
+
+            for (int start = 0; start < renderNodes.Count; start += MaxConcurrentSpriteDownloads)
             {
                 ThrowIfCancelled();
-                FigmaNode node = renderNodes[i];
-                if (!urls.ContainsKey(node.id) || string.IsNullOrEmpty(urls[node.id]))
+                List<Task<SpriteImportRecord>> downloads = new List<Task<SpriteImportRecord>>();
+                for (int i = start; i < Mathf.Min(start + MaxConcurrentSpriteDownloads, renderNodes.Count); i++)
                 {
-                    skippedSprites++;
-                    continue;
+                    FigmaNode node = renderNodes[i];
+                    if (!urls.ContainsKey(node.id) || string.IsNullOrEmpty(urls[node.id]))
+                    {
+                        skippedSprites++;
+                        continue;
+                    }
+
+                    downloads.Add(DownloadSpriteRecordAsync(node, urls[node.id], i, renderNodes.Count));
                 }
 
-                Report("Downloading sprites", "Downloading sprite " + (i + 1) + "/" + renderNodes.Count + "...", 0.45f + 0.25f * ((float)i / Mathf.Max(1, renderNodes.Count)));
-                byte[] bytes = await client.DownloadBytesAsync(urls[node.id], settings.cancellationToken);
-                ThrowIfCancelled();
-                spritesByNodeId[node.id] = SaveSprite(node, bytes);
+                SpriteImportRecord[] downloaded = await Task.WhenAll(downloads.ToArray());
+                for (int i = 0; i < downloaded.Length; i++)
+                {
+                    if (downloaded[i] != null)
+                    {
+                        records.Add(downloaded[i]);
+                    }
+                }
             }
+
+            ImportSprites(records);
 
             if (skippedSprites > 0)
             {
                 Debug.LogWarning("Figma to UGUI skipped " + skippedSprites + " generated sprite(s). Those nodes still import as RectTransforms, but their baked image could not be rendered by Figma.");
             }
+        }
+
+        private async Task<SpriteImportRecord> DownloadSpriteRecordAsync(FigmaNode node, string url, int index, int total)
+        {
+            ThrowIfCancelled();
+            Report("Downloading sprites", "Downloading sprite " + (index + 1) + "/" + total + "...", 0.45f + 0.25f * ((float)index / Mathf.Max(1, total)));
+            byte[] bytes = await client.DownloadBytesAsync(url, settings.cancellationToken);
+            ThrowIfCancelled();
+
+            return new SpriteImportRecord
+            {
+                node = node,
+                bytes = bytes,
+                assetPath = BuildSpriteAssetPath(node)
+            };
         }
 
         private void CollectNodesForRendering(FigmaNode node, List<FigmaNode> renderNodes)
@@ -781,39 +812,84 @@ namespace FigmaToUGUI.Editor
             metadata.importedAtUtc = DateTime.UtcNow.ToString("o");
         }
 
-        private Sprite SaveSprite(FigmaNode node, byte[] bytes)
+        private void ImportSprites(List<SpriteImportRecord> records)
         {
-            string safeName = MakeAssetSafeName(node.name + "_" + node.id);
-            string relativePath = NormalizeAssetFolder(settings.outputFolder).TrimEnd('/') + "/" + safeName + ".png";
-            string fullPath = Path.GetFullPath(relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
-            File.WriteAllBytes(fullPath, bytes);
-            AssetDatabase.ImportAsset(relativePath, ImportAssetOptions.ForceUpdate);
+            if (records == null || records.Count == 0)
+            {
+                return;
+            }
 
-            TextureImporter importer = AssetImporter.GetAtPath(relativePath) as TextureImporter;
+            ThrowIfCancelled();
+            Report("Importing sprites", "Writing sprite files...", 0.7f);
+
+            for (int i = 0; i < records.Count; i++)
+            {
+                SpriteImportRecord record = records[i];
+                string fullPath = Path.GetFullPath(record.assetPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+                File.WriteAllBytes(fullPath, record.bytes);
+            }
+
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+
+            ThrowIfCancelled();
+            Report("Importing sprites", "Applying sprite importer settings...", 0.72f);
+
+            AssetDatabase.StartAssetEditing();
+            try
+            {
+                for (int i = 0; i < records.Count; i++)
+                {
+                    ApplySpriteImporterSettings(records[i]);
+                }
+            }
+            finally
+            {
+                AssetDatabase.StopAssetEditing();
+            }
+
+            AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+
+            for (int i = 0; i < records.Count; i++)
+            {
+                Sprite sprite = AssetDatabase.LoadAssetAtPath<Sprite>(records[i].assetPath);
+                if (sprite != null)
+                {
+                    spritesByNodeId[records[i].node.id] = sprite;
+                }
+            }
+        }
+
+        private void ApplySpriteImporterSettings(SpriteImportRecord record)
+        {
+            TextureImporter importer = AssetImporter.GetAtPath(record.assetPath) as TextureImporter;
             if (importer != null)
             {
                 importer.textureType = TextureImporterType.Sprite;
                 importer.spriteImportMode = SpriteImportMode.Single;
                 importer.alphaIsTransparency = true;
                 importer.mipmapEnabled = false;
-                FigmaNineSliceRule rule = settings.profile != null ? settings.profile.FindNineSliceRule(node.name) : null;
+                FigmaNineSliceRule rule = settings.profile != null ? settings.profile.FindNineSliceRule(record.node.name) : null;
                 if (rule != null && rule.border != Vector4.zero)
                 {
                     importer.spriteBorder = rule.border;
                 }
 
-                importer.SaveAndReimport();
+                AssetDatabase.WriteImportSettingsIfDirty(record.assetPath);
+                AssetDatabase.ImportAsset(record.assetPath, ImportAssetOptions.ForceUpdate);
             }
+        }
 
-            return AssetDatabase.LoadAssetAtPath<Sprite>(relativePath);
+        private string BuildSpriteAssetPath(FigmaNode node)
+        {
+            string safeName = MakeAssetSafeName(node.name + "_" + node.id);
+            return NormalizeAssetFolder(settings.outputFolder).TrimEnd('/') + "/" + safeName + ".png";
         }
 
         private void EnsureOutputFolder()
         {
             settings.outputFolder = NormalizeAssetFolder(settings.outputFolder);
             Directory.CreateDirectory(Path.GetFullPath(settings.outputFolder));
-            AssetDatabase.Refresh();
         }
 
         private static string NormalizeAssetFolder(string folder)
@@ -864,6 +940,13 @@ namespace FigmaToUGUI.Editor
             {
                 settings.progress(new FigmaImportProgress(title, detail, value));
             }
+        }
+
+        private sealed class SpriteImportRecord
+        {
+            public FigmaNode node;
+            public byte[] bytes;
+            public string assetPath;
         }
 
     }
