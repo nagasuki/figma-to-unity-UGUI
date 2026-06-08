@@ -3,6 +3,7 @@
 ## 0.2.0
 
 - Added root UPM package structure for direct Git URL installs.
+- Added Unity `.meta` files for immutable Git package imports.
 - Added import profiles for font, prefab, and nine-slice mappings.
 - Added optional TextMeshPro import through reflection.
 - Added Figma Auto Layout to Unity layout group conversion.
