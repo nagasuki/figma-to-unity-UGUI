@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+- Reduced Figma image export batch size.
+- Added automatic retry by splitting image export batches after Figma render timeouts.
+- Added per-node lower-scale retry and skip behavior so one large rendered sprite does not fail the whole import.
+
 ## 0.2.0
 
 - Added root UPM package structure for direct Git URL installs.

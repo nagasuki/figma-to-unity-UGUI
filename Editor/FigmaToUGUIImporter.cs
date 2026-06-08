@@ -97,16 +97,23 @@ namespace FigmaToUGUI.Editor
             }
 
             Dictionary<string, string> urls = await client.GetNodeImageUrlsAsync(settings.fileKey, nodeIds, settings.imageScale);
+            int skippedSprites = 0;
             for (int i = 0; i < renderNodes.Count; i++)
             {
                 FigmaNode node = renderNodes[i];
                 if (!urls.ContainsKey(node.id) || string.IsNullOrEmpty(urls[node.id]))
                 {
+                    skippedSprites++;
                     continue;
                 }
 
                 byte[] bytes = await client.DownloadBytesAsync(urls[node.id]);
                 spritesByNodeId[node.id] = SaveSprite(node, bytes);
+            }
+
+            if (skippedSprites > 0)
+            {
+                Debug.LogWarning("Figma to UGUI skipped " + skippedSprites + " generated sprite(s). Those nodes still import as RectTransforms, but their baked image could not be rendered by Figma.");
             }
         }
 

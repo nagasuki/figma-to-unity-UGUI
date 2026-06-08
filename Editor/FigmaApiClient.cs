@@ -10,6 +10,7 @@ namespace FigmaToUGUI.Editor
     internal sealed class FigmaApiClient
     {
         private const string BaseUrl = "https://api.figma.com/v1";
+        private const int ImageBatchSize = 8;
 
         private readonly string accessToken;
 
@@ -43,41 +44,83 @@ namespace FigmaToUGUI.Editor
                 return results;
             }
 
-            const int batchSize = 40;
-            for (int start = 0; start < nodeIds.Count; start += batchSize)
+            float clampedScale = Mathf.Clamp(scale, 0.01f, 4f);
+            for (int start = 0; start < nodeIds.Count; start += ImageBatchSize)
             {
                 List<string> batch = new List<string>();
-                for (int i = start; i < Mathf.Min(start + batchSize, nodeIds.Count); i++)
+                for (int i = start; i < Mathf.Min(start + ImageBatchSize, nodeIds.Count); i++)
                 {
                     batch.Add(nodeIds[i]);
                 }
 
-                string ids = string.Join(",", batch.ToArray());
-                string url = BaseUrl + "/images/" + UnityWebRequest.EscapeURL(fileKey) +
-                             "?ids=" + UnityWebRequest.EscapeURL(ids) +
-                             "&format=png&scale=" + Mathf.Clamp(scale, 0.01f, 4f).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
-
-                string json = await GetTextAsync(url);
-                Dictionary<string, object> payload = MiniJson.Deserialize(json) as Dictionary<string, object>;
-                Dictionary<string, object> images = payload != null && payload.ContainsKey("images")
-                    ? payload["images"] as Dictionary<string, object>
-                    : null;
-
-                if (images == null)
-                {
-                    continue;
-                }
-
-                foreach (KeyValuePair<string, object> image in images)
-                {
-                    if (image.Value != null)
-                    {
-                        results[image.Key] = image.Value.ToString();
-                    }
-                }
+                await RequestNodeImageUrlsWithRetryAsync(fileKey, batch, clampedScale, results);
             }
 
             return results;
+        }
+
+        private async Task RequestNodeImageUrlsWithRetryAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results)
+        {
+            if (nodeIds == null || nodeIds.Count == 0)
+            {
+                return;
+            }
+
+            try
+            {
+                await RequestNodeImageUrlsAsync(fileKey, nodeIds, scale, results);
+            }
+            catch (InvalidOperationException ex)
+            {
+                if (!IsRenderTimeout(ex))
+                {
+                    throw;
+                }
+
+                if (nodeIds.Count > 1)
+                {
+                    int midpoint = nodeIds.Count / 2;
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(0, midpoint), scale, results);
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds.GetRange(midpoint, nodeIds.Count - midpoint), scale, results);
+                    return;
+                }
+
+                float nextScale = scale * 0.5f;
+                if (nextScale >= 0.25f)
+                {
+                    await RequestNodeImageUrlsWithRetryAsync(fileKey, nodeIds, nextScale, results);
+                    return;
+                }
+
+                Debug.LogWarning("Figma render timed out for node " + nodeIds[0] + ". The importer will keep the UI hierarchy and skip this generated sprite.");
+            }
+        }
+
+        private async Task RequestNodeImageUrlsAsync(string fileKey, List<string> nodeIds, float scale, Dictionary<string, string> results)
+        {
+            string ids = string.Join(",", nodeIds.ToArray());
+            string url = BaseUrl + "/images/" + UnityWebRequest.EscapeURL(fileKey) +
+                         "?ids=" + UnityWebRequest.EscapeURL(ids) +
+                         "&format=png&scale=" + scale.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+
+            string json = await GetTextAsync(url);
+            Dictionary<string, object> payload = MiniJson.Deserialize(json) as Dictionary<string, object>;
+            Dictionary<string, object> images = payload != null && payload.ContainsKey("images")
+                ? payload["images"] as Dictionary<string, object>
+                : null;
+
+            if (images == null)
+            {
+                return;
+            }
+
+            foreach (KeyValuePair<string, object> image in images)
+            {
+                if (image.Value != null)
+                {
+                    results[image.Key] = image.Value.ToString();
+                }
+            }
         }
 
         public async Task<byte[]> DownloadBytesAsync(string url)
@@ -115,6 +158,11 @@ namespace FigmaToUGUI.Editor
             {
                 throw new InvalidOperationException(request.error + "\n" + request.downloadHandler.text);
             }
+        }
+
+        private static bool IsRenderTimeout(Exception ex)
+        {
+            return ex.Message.IndexOf("Render timeout", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

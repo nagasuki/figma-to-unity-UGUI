@@ -1,6 +1,6 @@
 {
   "name": "com.mano.figma-to-ugui",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "displayName": "Figma to Unity UGUI",
   "description": "Unity Editor importer that converts Figma frames into UGUI RectTransform, Image, and Text hierarchies.",
   "unity": "2021.3",
