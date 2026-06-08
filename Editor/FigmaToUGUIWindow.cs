@@ -58,6 +58,7 @@ namespace FigmaToUGUI.Editor
         private const string ApplyConstraintsPrefsKey = "FigmaToUGUI.ApplyConstraints";
         private const string InferInteractiveComponentsPrefsKey = "FigmaToUGUI.InferInteractiveComponents";
         private const string StretchRootPrefsKey = "FigmaToUGUI.StretchRoot";
+        private const string LayoutDefaultsVersionPrefsKey = "FigmaToUGUI.LayoutDefaultsVersion";
         private const string CreatePrefabsPrefsKey = "FigmaToUGUI.CreatePrefabs";
         private const string ReplaceExistingPrefsKey = "FigmaToUGUI.ReplaceExisting";
         private const string PreserveUserChildrenPrefsKey = "FigmaToUGUI.PreserveUserChildren";
@@ -75,10 +76,10 @@ namespace FigmaToUGUI.Editor
         private bool addCanvasIfNeeded = true;
         private bool syncAllTopLevelFrames;
         private bool useTextMeshPro;
-        private bool applyAutoLayout = true;
+        private bool applyAutoLayout;
         private bool applyConstraints = true;
         private bool inferInteractiveComponents = true;
-        private bool stretchRootToParent = true;
+        private bool stretchRootToParent;
         private bool createPrefabsForSyncedRoots;
         private bool replaceExistingImport = true;
         private bool preserveUserChildrenOnResync = true;
@@ -96,6 +97,7 @@ namespace FigmaToUGUI.Editor
 
         public void OnEnable()
         {
+            MigrateLayoutDefaults();
             accessToken = EditorPrefs.GetString(TokenPrefsKey, string.Empty);
             fileInput = EditorPrefs.GetString(FilePrefsKey, string.Empty);
             nodeId = EditorPrefs.GetString(NodePrefsKey, string.Empty);
@@ -104,10 +106,10 @@ namespace FigmaToUGUI.Editor
             collapseVectorSubtrees = EditorPrefs.GetBool(CollapseVectorSubtreesPrefsKey, true);
             syncAllTopLevelFrames = EditorPrefs.GetBool(SyncAllTopLevelFramesPrefsKey, false);
             useTextMeshPro = EditorPrefs.GetBool(UseTextMeshProPrefsKey, false);
-            applyAutoLayout = EditorPrefs.GetBool(ApplyAutoLayoutPrefsKey, true);
+            applyAutoLayout = EditorPrefs.GetBool(ApplyAutoLayoutPrefsKey, false);
             applyConstraints = EditorPrefs.GetBool(ApplyConstraintsPrefsKey, true);
             inferInteractiveComponents = EditorPrefs.GetBool(InferInteractiveComponentsPrefsKey, true);
-            stretchRootToParent = EditorPrefs.GetBool(StretchRootPrefsKey, true);
+            stretchRootToParent = EditorPrefs.GetBool(StretchRootPrefsKey, false);
             createPrefabsForSyncedRoots = EditorPrefs.GetBool(CreatePrefabsPrefsKey, false);
             replaceExistingImport = EditorPrefs.GetBool(ReplaceExistingPrefsKey, true);
             preserveUserChildrenOnResync = EditorPrefs.GetBool(PreserveUserChildrenPrefsKey, true);
@@ -118,6 +120,20 @@ namespace FigmaToUGUI.Editor
                 string profilePath = AssetDatabase.GUIDToAssetPath(profileGuid);
                 profile = AssetDatabase.LoadAssetAtPath<FigmaToUGUIProfile>(profilePath);
             }
+        }
+
+        private void MigrateLayoutDefaults()
+        {
+            const int currentLayoutDefaultsVersion = 1;
+            int version = EditorPrefs.GetInt(LayoutDefaultsVersionPrefsKey, 0);
+            if (version >= currentLayoutDefaultsVersion)
+            {
+                return;
+            }
+
+            EditorPrefs.SetBool(ApplyAutoLayoutPrefsKey, false);
+            EditorPrefs.SetBool(StretchRootPrefsKey, false);
+            EditorPrefs.SetInt(LayoutDefaultsVersionPrefsKey, currentLayoutDefaultsVersion);
         }
 
         public void OnDisable()

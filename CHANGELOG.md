@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-06-09
+
+- Changed new layout defaults to preserve exact Figma positions by leaving root stretching and Unity LayoutGroup conversion off until explicitly enabled.
+
 ## 0.5.0 - 2026-06-08
 
 - Added Sync wording in the editor window and docs.

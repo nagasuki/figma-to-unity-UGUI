@@ -37,6 +37,7 @@ For local development, choose `Add package from disk...` and select this reposit
 If Odin Inspector is installed, `Tools/Figma/Import to UGUI (Odin)` is also available. Both windows run the same importer.
 
 Generated PNG sprites are written to `Assets/FigmaToUGUI/Generated` in the consuming Unity project. The package code stays reusable and clean.
+For closest visual parity with Figma, keep root stretching and Unity LayoutGroup conversion disabled; enable them only when you want responsive Unity reflow.
 
 ## Current scope
 

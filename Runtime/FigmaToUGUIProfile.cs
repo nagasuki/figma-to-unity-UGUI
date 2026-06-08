@@ -8,10 +8,10 @@ namespace FigmaToUGUI
     public sealed class FigmaToUGUIProfile : ScriptableObject
     {
         public bool useTextMeshPro;
-        public bool applyAutoLayout = true;
+        public bool applyAutoLayout;
         public bool applyConstraints = true;
         public bool inferInteractiveComponents = true;
-        public bool stretchRootToParent = true;
+        public bool stretchRootToParent;
         public bool createPrefabsForSyncedRoots;
         public bool replaceExistingImport = true;
         public bool preserveUserChildrenOnResync = true;

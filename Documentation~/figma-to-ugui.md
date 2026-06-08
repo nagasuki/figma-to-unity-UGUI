@@ -64,6 +64,8 @@ The importer has two speed-focused options in the import window:
 Enable these options in the import window for responsive UI:
 
 - `Convert Figma Constraints to RectTransform anchors` maps Figma left, right, center, stretch, and scale constraints to Unity anchors.
+- `Convert Figma Auto Layout to Unity Layout Groups` lets Unity reflow children, but can differ from Figma's exact pixel positions.
 - `Stretch imported root to parent/canvas` makes the imported root frame fill its selected parent or Canvas.
 
 For best results, set Figma constraints on important child layers before importing.
+For closest visual parity with Figma, leave Auto Layout conversion and root stretching disabled.
