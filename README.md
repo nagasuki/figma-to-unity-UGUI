@@ -34,6 +34,8 @@ For local development, choose `Add package from disk...` and select this reposit
 5. Select a target `RectTransform`, or let the tool create/use a `Canvas`.
 6. Click `Import Figma UI`.
 
+If Odin Inspector is installed, `Tools/Figma/Import to UGUI (Odin)` is also available. Both windows run the same importer.
+
 Generated PNG sprites are written to `Assets/FigmaToUGUI/Generated` in the consuming Unity project. The package code stays reusable and clean.
 
 ## Current scope

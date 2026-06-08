@@ -23,6 +23,8 @@ README.md
 5. Select a target `RectTransform`, or let the importer create/use a `Canvas`.
 6. Click `Import Figma UI`.
 
+Projects with Odin Inspector installed can also open `Tools/Figma/Import to UGUI (Odin)`.
+
 ## Profiles
 
 Create a `FigmaToUGUIProfile` asset from the importer window or from `Assets > Create > Figma To UGUI > Import Profile`.

@@ -1,0 +1,31 @@
+{
+  "name": "Mano.FigmaToUGUI.Editor.Odin",
+  "references": [
+    "Mano.FigmaToUGUI.Editor",
+    "Sirenix.OdinInspector.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [
+    "ODIN_INSPECTOR"
+  ],
+  "versionDefines": [
+    {
+      "name": "com.sirenix.odininspector",
+      "expression": "0.0.0",
+      "define": "ODIN_INSPECTOR"
+    },
+    {
+      "name": "com.sirenix.odin-inspector",
+      "expression": "0.0.0",
+      "define": "ODIN_INSPECTOR"
+    }
+  ],
+  "noEngineReferences": false
+}

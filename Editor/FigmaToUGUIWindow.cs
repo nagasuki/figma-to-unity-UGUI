@@ -9,6 +9,42 @@ namespace FigmaToUGUI.Editor
 {
     public sealed class FigmaToUGUIWindow : EditorWindow
     {
+        private FigmaToUGUIWindowController controller;
+
+        [MenuItem("Tools/Figma/Import to UGUI")]
+        public static void Open()
+        {
+            GetWindow<FigmaToUGUIWindow>("Figma to UGUI");
+        }
+
+        private void OnEnable()
+        {
+            controller = new FigmaToUGUIWindowController(this);
+            controller.OnEnable();
+        }
+
+        private void OnDisable()
+        {
+            if (controller != null)
+            {
+                controller.OnDisable();
+            }
+        }
+
+        private void OnGUI()
+        {
+            if (controller == null)
+            {
+                controller = new FigmaToUGUIWindowController(this);
+                controller.OnEnable();
+            }
+
+            controller.OnGUI();
+        }
+    }
+
+    public sealed class FigmaToUGUIWindowController
+    {
         private const string TokenPrefsKey = "FigmaToUGUI.AccessToken";
         private const string FilePrefsKey = "FigmaToUGUI.File";
         private const string NodePrefsKey = "FigmaToUGUI.Node";
@@ -43,14 +79,14 @@ namespace FigmaToUGUI.Editor
         private CancellationTokenSource cancellationTokenSource;
         private string status;
         private Vector2 scroll;
+        private readonly EditorWindow window;
 
-        [MenuItem("Tools/Figma/Import to UGUI")]
-        public static void Open()
+        public FigmaToUGUIWindowController(EditorWindow window)
         {
-            GetWindow<FigmaToUGUIWindow>("Figma to UGUI");
+            this.window = window;
         }
 
-        private void OnEnable()
+        public void OnEnable()
         {
             accessToken = EditorPrefs.GetString(TokenPrefsKey, string.Empty);
             fileInput = EditorPrefs.GetString(FilePrefsKey, string.Empty);
@@ -72,13 +108,13 @@ namespace FigmaToUGUI.Editor
             }
         }
 
-        private void OnDisable()
+        public void OnDisable()
         {
             CancelImport();
             EditorUtility.ClearProgressBar();
         }
 
-        private void OnGUI()
+        public void OnGUI()
         {
             scroll = EditorGUILayout.BeginScrollView(scroll);
 
@@ -262,6 +298,14 @@ namespace FigmaToUGUI.Editor
             Repaint();
         }
 
+        private void Repaint()
+        {
+            if (window != null)
+            {
+                window.Repaint();
+            }
+        }
+
         private void DrawStatus()
         {
             if (!string.IsNullOrEmpty(status))
@@ -306,7 +350,7 @@ namespace FigmaToUGUI.Editor
             }
 
             string path = AssetDatabase.GenerateUniqueAssetPath(folder + "/FigmaToUGUIProfile.asset");
-            FigmaToUGUIProfile asset = CreateInstance<FigmaToUGUIProfile>();
+            FigmaToUGUIProfile asset = ScriptableObject.CreateInstance<FigmaToUGUIProfile>();
             AssetDatabase.CreateAsset(asset, path);
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
