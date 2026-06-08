@@ -1,20 +1,29 @@
-# figma-to-unity-UGUI
+# Figma to Unity UGUI
 
-Reusable Unity Package Manager package for importing a Figma frame into a Unity UGUI hierarchy.
+Unity Package Manager package for importing a Figma frame into a Unity UGUI hierarchy.
 
-Package path:
+This repository is structured as a root UPM package, so Unity can install it directly from a Git URL without `?path=...`.
 
-```text
-Packages/com.mano.figma-to-ugui
+## Install
+
+In Unity:
+
+1. Open `Window > Package Manager`.
+2. Click `+`.
+3. Choose `Add package from git URL...`.
+4. Paste this repository URL.
+
+You can also add it to a Unity project's `Packages/manifest.json`:
+
+```json
+{
+  "dependencies": {
+    "com.mano.figma-to-ugui": "https://github.com/YOUR_ORG/figma-to-unity-UGUI.git"
+  }
+}
 ```
 
-## Install in another project
-
-Use one of these options:
-
-- Copy `Packages/com.mano.figma-to-ugui` into another Unity project's `Packages` folder.
-- In Unity Package Manager, choose `Add package from disk...` and select `Packages/com.mano.figma-to-ugui/package.json`.
-- Push this repo to Git and add it through Unity Package Manager as a Git package with `?path=/Packages/com.mano.figma-to-ugui`.
+For local development, choose `Add package from disk...` and select this repository's root `package.json`.
 
 ## Use
 

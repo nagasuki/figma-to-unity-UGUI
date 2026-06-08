@@ -4,6 +4,7 @@
   "displayName": "Figma to Unity UGUI",
   "description": "Unity Editor importer that converts Figma frames into UGUI RectTransform, Image, and Text hierarchies.",
   "unity": "2021.3",
+  "license": "MIT",
   "author": {
     "name": "Mano"
   },
