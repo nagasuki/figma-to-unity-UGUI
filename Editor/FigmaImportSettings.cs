@@ -11,10 +11,14 @@ namespace FigmaToUGUI.Editor
         public string outputFolder = "Assets/FigmaToUGUI/Generated";
         public float imageScale = 2f;
         public bool renderUnsupportedNodesAsImages = true;
+        public bool reuseGeneratedSprites = true;
+        public bool collapseVectorSubtrees = true;
+        public int collapseVectorSubtreeThreshold = 6;
         public bool addCanvasIfNeeded = true;
         public bool useTextMeshPro;
         public bool applyAutoLayout = true;
         public bool applyConstraints = true;
+        public bool stretchRootToParent = true;
         public bool replaceExistingImport = true;
         public bool addImportMetadata = true;
         public FigmaToUGUIProfile profile;

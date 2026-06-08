@@ -10,6 +10,7 @@ namespace FigmaToUGUI
         public bool useTextMeshPro;
         public bool applyAutoLayout = true;
         public bool applyConstraints = true;
+        public bool stretchRootToParent = true;
         public bool replaceExistingImport = true;
         public bool addImportMetadata = true;
         public Font defaultLegacyFont;

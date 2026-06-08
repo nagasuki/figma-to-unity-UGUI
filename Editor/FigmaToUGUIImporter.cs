@@ -57,7 +57,7 @@ namespace FigmaToUGUI.Editor
 
             int totalNodes = CountImportableNodes(root);
             int createdNodes = 0;
-            GameObject imported = CreateNode(root, parent, null, totalNodes, ref createdNodes);
+            GameObject imported = CreateNode(root, parent, null, true, totalNodes, ref createdNodes);
             imported.name = SafeName(root.name, "Figma Import");
 
             Selection.activeGameObject = imported;
@@ -102,12 +102,20 @@ namespace FigmaToUGUI.Editor
             Report("Preparing sprites", "Finding layers that need generated sprites...", 0.18f);
 
             List<FigmaNode> renderNodes = new List<FigmaNode>();
-            CollectNodesForRendering(root, renderNodes);
+            CollectNodesForRendering(root, renderNodes, true);
 
             List<string> nodeIds = new List<string>();
             for (int i = 0; i < renderNodes.Count; i++)
             {
-                nodeIds.Add(renderNodes[i].id);
+                FigmaNode node = renderNodes[i];
+                Sprite cachedSprite;
+                if (settings.reuseGeneratedSprites && TryLoadCachedSprite(node, out cachedSprite))
+                {
+                    spritesByNodeId[node.id] = cachedSprite;
+                    continue;
+                }
+
+                nodeIds.Add(node.id);
             }
 
             Dictionary<string, string> urls = await client.GetNodeImageUrlsAsync(settings.fileKey, nodeIds, settings.imageScale, settings.cancellationToken, settings.progress);
@@ -121,6 +129,11 @@ namespace FigmaToUGUI.Editor
                 for (int i = start; i < Mathf.Min(start + MaxConcurrentSpriteDownloads, renderNodes.Count); i++)
                 {
                     FigmaNode node = renderNodes[i];
+                    if (spritesByNodeId.ContainsKey(node.id))
+                    {
+                        continue;
+                    }
+
                     if (!urls.ContainsKey(node.id) || string.IsNullOrEmpty(urls[node.id]))
                     {
                         skippedSprites++;
@@ -163,10 +176,16 @@ namespace FigmaToUGUI.Editor
             };
         }
 
-        private void CollectNodesForRendering(FigmaNode node, List<FigmaNode> renderNodes)
+        private void CollectNodesForRendering(FigmaNode node, List<FigmaNode> renderNodes, bool isRoot)
         {
             if (node == null || !node.visible || !node.HasBounds)
             {
+                return;
+            }
+
+            if (!isRoot && ShouldCollapseSubtreeAsSprite(node))
+            {
+                renderNodes.Add(node);
                 return;
             }
 
@@ -183,8 +202,83 @@ namespace FigmaToUGUI.Editor
 
             for (int i = 0; i < node.children.Count; i++)
             {
-                CollectNodesForRendering(node.children[i], renderNodes);
+                CollectNodesForRendering(node.children[i], renderNodes, false);
             }
+        }
+
+        private bool ShouldCollapseSubtreeAsSprite(FigmaNode node)
+        {
+            if (!settings.collapseVectorSubtrees || node.children == null || node.children.Count == 0)
+            {
+                return false;
+            }
+
+            if (node.type != "GROUP" && node.type != "COMPONENT" && node.type != "INSTANCE")
+            {
+                return false;
+            }
+
+            if (ContainsText(node))
+            {
+                return false;
+            }
+
+            return CountRenderableDescendants(node) >= Mathf.Max(2, settings.collapseVectorSubtreeThreshold);
+        }
+
+        private bool ContainsText(FigmaNode node)
+        {
+            if (node == null)
+            {
+                return false;
+            }
+
+            if (node.type == "TEXT")
+            {
+                return true;
+            }
+
+            if (node.children == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < node.children.Count; i++)
+            {
+                if (ContainsText(node.children[i]))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private int CountRenderableDescendants(FigmaNode node)
+        {
+            if (node == null || node.children == null)
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < node.children.Count; i++)
+            {
+                FigmaNode child = node.children[i];
+                if (child == null || !child.visible || !child.HasBounds)
+                {
+                    continue;
+                }
+
+                if (ShouldRenderNodeAsSprite(child))
+                {
+                    count++;
+                }
+
+                count += CountRenderableDescendants(child);
+            }
+
+            return count;
         }
 
         private bool ShouldRenderNodeAsSprite(FigmaNode node)
@@ -215,7 +309,7 @@ namespace FigmaToUGUI.Editor
             return false;
         }
 
-        private GameObject CreateNode(FigmaNode node, Transform parent, FigmaRectangle parentBounds, int totalNodes, ref int createdNodes)
+        private GameObject CreateNode(FigmaNode node, Transform parent, FigmaRectangle parentBounds, bool isRoot, int totalNodes, ref int createdNodes)
         {
             ThrowIfCancelled();
             if (node == null || !node.visible || !node.HasBounds)
@@ -235,7 +329,7 @@ namespace FigmaToUGUI.Editor
             go.transform.SetParent(parent, false);
 
             RectTransform rect = go.GetComponent<RectTransform>();
-            ApplyRect(rect, node, parentBounds);
+            ApplyRect(rect, node, parentBounds, isRoot);
             ApplyMetadata(go, node);
             ApplyLayoutElement(go, node);
 
@@ -258,7 +352,7 @@ namespace FigmaToUGUI.Editor
             {
                 for (int i = 0; i < node.children.Count; i++)
                 {
-                    CreateNode(node.children[i], rect, node.Bounds, totalNodes, ref createdNodes);
+                    CreateNode(node.children[i], rect, node.Bounds, false, totalNodes, ref createdNodes);
                 }
             }
 
@@ -326,9 +420,15 @@ namespace FigmaToUGUI.Editor
             return wrapper;
         }
 
-        private void ApplyRect(RectTransform rect, FigmaNode node, FigmaRectangle parentBounds)
+        private void ApplyRect(RectTransform rect, FigmaNode node, FigmaRectangle parentBounds, bool isRoot)
         {
             FigmaRectangle bounds = node.Bounds;
+            if (isRoot && settings.stretchRootToParent && rect.parent is RectTransform)
+            {
+                ApplyStretchToParent(rect);
+                return;
+            }
+
             if (!settings.applyConstraints || parentBounds == null || node.constraints == null)
             {
                 ApplyFixedRect(rect, bounds, parentBounds);
@@ -336,6 +436,17 @@ namespace FigmaToUGUI.Editor
             }
 
             ApplyConstrainedRect(rect, bounds, parentBounds, node.constraints);
+        }
+
+        private void ApplyStretchToParent(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+            rect.anchoredPosition = Vector2.zero;
+            rect.sizeDelta = Vector2.zero;
         }
 
         private void ApplyFixedRect(RectTransform rect, FigmaRectangle bounds, FigmaRectangle parentBounds)
@@ -363,6 +474,8 @@ namespace FigmaToUGUI.Editor
 
             bool stretchX = constraints.horizontal == "STRETCH";
             bool stretchY = constraints.vertical == "STRETCH";
+            bool scaleX = constraints.horizontal == "SCALE" && parentBounds.width > 0f;
+            bool scaleY = constraints.vertical == "SCALE" && parentBounds.height > 0f;
 
             Vector2 anchorMin = Vector2.zero;
             Vector2 anchorMax = Vector2.zero;
@@ -370,7 +483,14 @@ namespace FigmaToUGUI.Editor
             Vector2 size = new Vector2(bounds.width, bounds.height);
             Vector2 position = Vector2.zero;
 
-            if (stretchX)
+            if (scaleX)
+            {
+                anchorMin.x = Mathf.Clamp01(left / parentBounds.width);
+                anchorMax.x = Mathf.Clamp01((left + bounds.width) / parentBounds.width);
+                pivot.x = 0.5f;
+                size.x = 0f;
+            }
+            else if (stretchX)
             {
                 anchorMin.x = 0f;
                 anchorMax.x = 1f;
@@ -398,7 +518,14 @@ namespace FigmaToUGUI.Editor
                 position.x = left;
             }
 
-            if (stretchY)
+            if (scaleY)
+            {
+                anchorMin.y = Mathf.Clamp01(bottom / parentBounds.height);
+                anchorMax.y = Mathf.Clamp01((bottom + bounds.height) / parentBounds.height);
+                pivot.y = 0.5f;
+                size.y = 0f;
+            }
+            else if (stretchY)
             {
                 anchorMin.y = 0f;
                 anchorMax.y = 1f;
@@ -442,12 +569,32 @@ namespace FigmaToUGUI.Editor
                 rect.offsetMax = offsetMax;
             }
 
+            if (scaleX)
+            {
+                Vector2 offsetMin = rect.offsetMin;
+                Vector2 offsetMax = rect.offsetMax;
+                offsetMin.x = 0f;
+                offsetMax.x = 0f;
+                rect.offsetMin = offsetMin;
+                rect.offsetMax = offsetMax;
+            }
+
             if (stretchY)
             {
                 Vector2 offsetMin = rect.offsetMin;
                 Vector2 offsetMax = rect.offsetMax;
                 offsetMin.y = bottom;
                 offsetMax.y = -top;
+                rect.offsetMin = offsetMin;
+                rect.offsetMax = offsetMax;
+            }
+
+            if (scaleY)
+            {
+                Vector2 offsetMin = rect.offsetMin;
+                Vector2 offsetMax = rect.offsetMax;
+                offsetMin.y = 0f;
+                offsetMax.y = 0f;
                 rect.offsetMin = offsetMin;
                 rect.offsetMax = offsetMax;
             }
@@ -882,8 +1029,22 @@ namespace FigmaToUGUI.Editor
 
         private string BuildSpriteAssetPath(FigmaNode node)
         {
-            string safeName = MakeAssetSafeName(node.name + "_" + node.id);
+            string scaleKey = settings.imageScale.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture).Replace('.', '_');
+            string safeName = MakeAssetSafeName(node.name + "_" + node.id + "_s" + scaleKey);
             return NormalizeAssetFolder(settings.outputFolder).TrimEnd('/') + "/" + safeName + ".png";
+        }
+
+        private bool TryLoadCachedSprite(FigmaNode node, out Sprite sprite)
+        {
+            sprite = null;
+            string assetPath = BuildSpriteAssetPath(node);
+            if (!File.Exists(Path.GetFullPath(assetPath)))
+            {
+                return false;
+            }
+
+            sprite = AssetDatabase.LoadAssetAtPath<Sprite>(assetPath);
+            return sprite != null;
         }
 
         private void EnsureOutputFolder()

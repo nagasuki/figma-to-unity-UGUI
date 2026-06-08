@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+- Added responsive root stretching so imported screens can fill the selected parent or Canvas.
+- Added Figma `SCALE` constraint conversion to proportional RectTransform anchors.
+- Added importer option for stretching the imported root to its parent.
+
+## 0.3.2
+
+- Added generated sprite cache reuse to skip Figma render/download work on repeated imports.
+- Added vector-only subtree collapsing to reduce the number of generated sprite requests for complex icon/group layers.
+- Added importer window toggles for sprite cache reuse and vector group collapsing.
+
 ## 0.3.1
 
 - Improved import speed by downloading generated sprites with limited concurrency.

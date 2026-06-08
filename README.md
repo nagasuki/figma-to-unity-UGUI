@@ -44,10 +44,14 @@ Generated PNG sprites are written to `Assets/FigmaToUGUI/Generated` in the consu
 - Text can optionally import as TextMeshPro when TextMeshPro is installed.
 - Figma Auto Layout frames can become Unity `HorizontalLayoutGroup` or `VerticalLayoutGroup`.
 - Figma Constraints can become RectTransform anchors for left/right/center/stretch behavior.
+- Figma `SCALE` constraints can become proportional anchors for responsive resizing.
+- Imported root frames can stretch to their selected parent or Canvas.
 - Import profiles can map Figma font families to Unity fonts or TMP font assets.
 - Import profiles can replace matching Figma layers with Unity prefabs.
 - Import profiles can apply nine-slice borders to generated sprites by layer-name rule.
 - Imported nodes can store metadata for replacing a previous import from the same Figma node.
 - Image fills, vectors, lines, stars, polygons, boolean operations, and complex shapes can be rendered as PNG sprites through Figma's image endpoint.
+- Generated sprites can be reused from cache on repeated imports.
+- Vector-only groups can be collapsed into one generated sprite to reduce import time.
 
 Future upgrades can add design tokens/variables, richer component overrides, and prototype interaction import.

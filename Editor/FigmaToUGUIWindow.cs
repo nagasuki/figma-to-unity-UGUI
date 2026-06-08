@@ -14,9 +14,12 @@ namespace FigmaToUGUI.Editor
         private const string NodePrefsKey = "FigmaToUGUI.Node";
         private const string OutputPrefsKey = "FigmaToUGUI.Output";
         private const string ProfilePrefsKey = "FigmaToUGUI.Profile";
+        private const string ReuseGeneratedSpritesPrefsKey = "FigmaToUGUI.ReuseGeneratedSprites";
+        private const string CollapseVectorSubtreesPrefsKey = "FigmaToUGUI.CollapseVectorSubtrees";
         private const string UseTextMeshProPrefsKey = "FigmaToUGUI.UseTextMeshPro";
         private const string ApplyAutoLayoutPrefsKey = "FigmaToUGUI.ApplyAutoLayout";
         private const string ApplyConstraintsPrefsKey = "FigmaToUGUI.ApplyConstraints";
+        private const string StretchRootPrefsKey = "FigmaToUGUI.StretchRoot";
         private const string ReplaceExistingPrefsKey = "FigmaToUGUI.ReplaceExisting";
         private const string AddMetadataPrefsKey = "FigmaToUGUI.AddMetadata";
 
@@ -27,10 +30,13 @@ namespace FigmaToUGUI.Editor
         private FigmaToUGUIProfile profile;
         private float imageScale = 2f;
         private bool renderUnsupportedNodesAsImages = true;
+        private bool reuseGeneratedSprites = true;
+        private bool collapseVectorSubtrees = true;
         private bool addCanvasIfNeeded = true;
         private bool useTextMeshPro;
         private bool applyAutoLayout = true;
         private bool applyConstraints = true;
+        private bool stretchRootToParent = true;
         private bool replaceExistingImport = true;
         private bool addImportMetadata = true;
         private bool isImporting;
@@ -50,9 +56,12 @@ namespace FigmaToUGUI.Editor
             fileInput = EditorPrefs.GetString(FilePrefsKey, string.Empty);
             nodeId = EditorPrefs.GetString(NodePrefsKey, string.Empty);
             outputFolder = EditorPrefs.GetString(OutputPrefsKey, "Assets/FigmaToUGUI/Generated");
+            reuseGeneratedSprites = EditorPrefs.GetBool(ReuseGeneratedSpritesPrefsKey, true);
+            collapseVectorSubtrees = EditorPrefs.GetBool(CollapseVectorSubtreesPrefsKey, true);
             useTextMeshPro = EditorPrefs.GetBool(UseTextMeshProPrefsKey, false);
             applyAutoLayout = EditorPrefs.GetBool(ApplyAutoLayoutPrefsKey, true);
             applyConstraints = EditorPrefs.GetBool(ApplyConstraintsPrefsKey, true);
+            stretchRootToParent = EditorPrefs.GetBool(StretchRootPrefsKey, true);
             replaceExistingImport = EditorPrefs.GetBool(ReplaceExistingPrefsKey, true);
             addImportMetadata = EditorPrefs.GetBool(AddMetadataPrefsKey, true);
             string profileGuid = EditorPrefs.GetString(ProfilePrefsKey, string.Empty);
@@ -93,6 +102,12 @@ namespace FigmaToUGUI.Editor
 
                 imageScale = EditorGUILayout.Slider("Rendered Image Scale", imageScale, 0.25f, 4f);
                 renderUnsupportedNodesAsImages = EditorGUILayout.ToggleLeft("Render images, vectors, and complex shapes as sprites", renderUnsupportedNodesAsImages);
+                using (new EditorGUI.DisabledScope(!renderUnsupportedNodesAsImages))
+                {
+                    reuseGeneratedSprites = EditorGUILayout.ToggleLeft("Reuse generated sprite cache", reuseGeneratedSprites);
+                    collapseVectorSubtrees = EditorGUILayout.ToggleLeft("Collapse vector-only groups into one generated sprite", collapseVectorSubtrees);
+                }
+
                 addCanvasIfNeeded = EditorGUILayout.ToggleLeft("Create or use a Canvas when no parent is selected", addCanvasIfNeeded);
                 replaceExistingImport = EditorGUILayout.ToggleLeft("Replace previous import from the same Figma node", replaceExistingImport);
                 addImportMetadata = EditorGUILayout.ToggleLeft("Add Figma import metadata to generated objects", addImportMetadata);
@@ -111,6 +126,7 @@ namespace FigmaToUGUI.Editor
 
                 applyAutoLayout = EditorGUILayout.ToggleLeft("Convert Figma Auto Layout to Unity Layout Groups", applyAutoLayout);
                 applyConstraints = EditorGUILayout.ToggleLeft("Convert Figma Constraints to RectTransform anchors", applyConstraints);
+                stretchRootToParent = EditorGUILayout.ToggleLeft("Stretch imported root to parent/canvas", stretchRootToParent);
             }
 
             EditorGUILayout.Space(8f);
@@ -175,10 +191,13 @@ namespace FigmaToUGUI.Editor
                     outputFolder = outputFolder,
                     imageScale = imageScale,
                     renderUnsupportedNodesAsImages = renderUnsupportedNodesAsImages,
+                    reuseGeneratedSprites = reuseGeneratedSprites,
+                    collapseVectorSubtrees = collapseVectorSubtrees,
                     addCanvasIfNeeded = addCanvasIfNeeded,
                     useTextMeshPro = useTextMeshPro,
                     applyAutoLayout = applyAutoLayout && (profile == null || profile.applyAutoLayout),
                     applyConstraints = applyConstraints && (profile == null || profile.applyConstraints),
+                    stretchRootToParent = stretchRootToParent && (profile == null || profile.stretchRootToParent),
                     replaceExistingImport = replaceExistingImport && (profile == null || profile.replaceExistingImport),
                     addImportMetadata = addImportMetadata && (profile == null || profile.addImportMetadata),
                     profile = profile,
@@ -258,9 +277,12 @@ namespace FigmaToUGUI.Editor
             EditorPrefs.SetString(FilePrefsKey, fileInput);
             EditorPrefs.SetString(NodePrefsKey, nodeId);
             EditorPrefs.SetString(OutputPrefsKey, outputFolder);
+            EditorPrefs.SetBool(ReuseGeneratedSpritesPrefsKey, reuseGeneratedSprites);
+            EditorPrefs.SetBool(CollapseVectorSubtreesPrefsKey, collapseVectorSubtrees);
             EditorPrefs.SetBool(UseTextMeshProPrefsKey, useTextMeshPro);
             EditorPrefs.SetBool(ApplyAutoLayoutPrefsKey, applyAutoLayout);
             EditorPrefs.SetBool(ApplyConstraintsPrefsKey, applyConstraints);
+            EditorPrefs.SetBool(StretchRootPrefsKey, stretchRootToParent);
             EditorPrefs.SetBool(ReplaceExistingPrefsKey, replaceExistingImport);
             EditorPrefs.SetBool(AddMetadataPrefsKey, addImportMetadata);
 

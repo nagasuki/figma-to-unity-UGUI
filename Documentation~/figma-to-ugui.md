@@ -34,3 +34,19 @@ Profiles can configure:
 - Layer-name to prefab mappings.
 - Layer-name to nine-slice sprite border rules.
 - Default toggles for Auto Layout, constraints, and re-import metadata.
+
+## Speed Options
+
+The importer has two speed-focused options in the import window:
+
+- `Reuse generated sprite cache` skips Figma render/download work when a generated PNG already exists for the same Figma node and render scale.
+- `Collapse vector-only groups into one generated sprite` reduces request count by rendering complex visual-only groups as one sprite instead of rendering every vector child separately.
+
+## Responsive Import
+
+Enable these options in the import window for responsive UI:
+
+- `Convert Figma Constraints to RectTransform anchors` maps Figma left, right, center, stretch, and scale constraints to Unity anchors.
+- `Stretch imported root to parent/canvas` makes the imported root frame fill its selected parent or Canvas.
+
+For best results, set Figma constraints on important child layers before importing.
